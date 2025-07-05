@@ -2,7 +2,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import pdfParse from 'pdf-parse';
+import pdf from 'pdf-parse/lib/pdf-parse.js';
 import fs from 'fs/promises';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
@@ -51,7 +51,7 @@ if (!deepseekClient && !openaiClient && !genAI && !anthropic) {
 async function extractTextFromPDF(filePath) {
   try {
     const dataBuffer = await fs.readFile(filePath);
-    const data = await pdfParse(dataBuffer);
+    const data = await pdf(dataBuffer);
     
     console.log('PDF Text extracted, length:', data.text.length);
     console.log('First 500 chars:', data.text.substring(0, 500));
