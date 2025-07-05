@@ -2,7 +2,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { PDFDocument } from 'pdf-lib';
+import pdfParse from 'pdf-parse';
 import fs from 'fs/promises';
 import dotenv from 'dotenv';
 import OpenAI from 'openai';
@@ -47,43 +47,19 @@ if (!deepseekClient && !openaiClient && !genAI && !anthropic) {
   console.log('WARNING: No AI services configured. Using mock data only.');
 }
 
-// Helper function to extract text from PDF using pdf-lib
+// Helper function to extract text from PDF
 async function extractTextFromPDF(filePath) {
   try {
-    const pdfBuffer = await fs.readFile(filePath);
-    const pdfDoc = await PDFDocument.load(pdfBuffer);
+    const dataBuffer = await fs.readFile(filePath);
+    const data = await pdfParse(dataBuffer);
     
-    // For now, we'll use a simple approach
-    // In production, you might want to use pdf.js or another library for better text extraction
-    const pages = pdfDoc.getPages();
-    let text = '';
+    console.log('PDF Text extracted, length:', data.text.length);
+    console.log('First 500 chars:', data.text.substring(0, 500));
     
-    // This is a basic implementation - for better results, consider using pdf.js-extract
-    text = `PDF with ${pages.length} pages uploaded. Content extraction in progress.`;
-    
-    // For actual text extraction, we'll need to parse the PDF content
-    // This is a placeholder - in production, use a proper PDF text extraction library
-    const fileContent = await fs.readFile(filePath, 'utf-8').catch(() => '');
-    
-    return text + '\n' + fileContent;
+    return data.text;
   } catch (error) {
     console.error('Error extracting PDF text:', error);
     throw new Error('Failed to extract text from PDF');
-  }
-}
-
-// Alternative: Simple file reading for testing
-async function readPDFFile(filePath) {
-  try {
-    // For testing, we'll just read the file
-    const stats = await fs.stat(filePath);
-    console.log(`PDF file size: ${stats.size} bytes`);
-    
-    // Return a placeholder text for testing
-    return "Purchase Order Document - Please implement proper PDF text extraction";
-  } catch (error) {
-    console.error('Error reading PDF:', error);
-    throw new Error('Failed to read PDF file');
   }
 }
 
@@ -201,8 +177,9 @@ async function extractPOData(pdfText) {
   if (anthropic) extractors.push({ name: 'Claude', fn: extractWithClaude });
   if (openaiClient) extractors.push({ name: 'GPT-4', fn: extractWithGPT4 });
 
-  if (extractors.length === 0 || pdfText.includes("Please implement proper PDF text extraction")) {
-    console.log("No AI services configured or using mock data for testing");
+  // Only use mock data if no extractors available
+  if (extractors.length === 0) {
+    console.log("No AI services configured, using mock data");
     return {
       success: true,
       data: {
@@ -229,6 +206,7 @@ async function extractPOData(pdfText) {
     };
   }
 
+  // Try each AI service
   for (const extractor of extractors) {
     try {
       console.log(`Attempting extraction with ${extractor.name}...`);
@@ -266,8 +244,9 @@ app.post('/api/extract-po', upload.single('pdf'), async (req, res) => {
     filePath = req.file.path;
     console.log(`Processing PDF: ${req.file.originalname}`);
     
-    // Extract text from PDF (using simple method for now)
-    const pdfText = await readPDFFile(filePath);
+    // Extract text from PDF
+    const pdfText = await extractTextFromPDF(filePath);
+    console.log(`Extracted ${pdfText.length} characters from PDF`);
     
     // Extract PO data using AI
     const result = await extractPOData(pdfText);
