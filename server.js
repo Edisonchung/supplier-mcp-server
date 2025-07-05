@@ -21,20 +21,31 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
 });
 
-// Initialize AI clients
-const deepseekClient = new OpenAI({
+// Initialize AI clients (only if API keys are provided)
+const deepseekClient = process.env.DEEPSEEK_API_KEY ? new OpenAI({
   apiKey: process.env.DEEPSEEK_API_KEY,
   baseURL: 'https://api.deepseek.com/v1'
-});
+}) : null;
 
-const openaiClient = new OpenAI({
+const openaiClient = process.env.OPENAI_API_KEY ? new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
-});
+}) : null;
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const anthropic = new Anthropic({
+const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
-});
+}) : null;
+
+// Log which services are available
+console.log('Available AI services:');
+if (deepseekClient) console.log('- DeepSeek');
+if (openaiClient) console.log('- OpenAI');
+if (genAI) console.log('- Gemini');
+if (anthropic) console.log('- Anthropic');
+if (!deepseekClient && !openaiClient && !genAI && !anthropic) {
+  console.log('WARNING: No AI services configured. Using mock data only.');
+}
 
 // Helper function to extract text from PDF using pdf-lib
 async function extractTextFromPDF(filePath) {
@@ -108,6 +119,7 @@ ${pdfText}
 
 // AI extraction functions
 async function extractWithDeepSeek(pdfText) {
+  if (!deepseekClient) throw new Error('DeepSeek client not initialized');
   try {
     const response = await deepseekClient.chat.completions.create({
       model: 'deepseek-chat',
@@ -127,6 +139,7 @@ async function extractWithDeepSeek(pdfText) {
 }
 
 async function extractWithGemini(pdfText) {
+  if (!genAI) throw new Error('Gemini client not initialized');
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
     const result = await model.generateContent(createExtractionPrompt(pdfText));
@@ -140,6 +153,7 @@ async function extractWithGemini(pdfText) {
 }
 
 async function extractWithClaude(pdfText) {
+  if (!anthropic) throw new Error('Anthropic client not initialized');
   try {
     const response = await anthropic.messages.create({
       model: 'claude-3-sonnet-20240229',
@@ -159,6 +173,7 @@ async function extractWithClaude(pdfText) {
 }
 
 async function extractWithGPT4(pdfText) {
+  if (!openaiClient) throw new Error('OpenAI client not initialized');
   try {
     const response = await openaiClient.chat.completions.create({
       model: 'gpt-4-turbo-preview',
@@ -179,16 +194,15 @@ async function extractWithGPT4(pdfText) {
 
 // Main extraction function with fallback
 async function extractPOData(pdfText) {
-  const extractors = [
-    { name: 'DeepSeek', fn: extractWithDeepSeek },
-    { name: 'Gemini', fn: extractWithGemini },
-    { name: 'Claude', fn: extractWithClaude },
-    { name: 'GPT-4', fn: extractWithGPT4 }
-  ];
+  const extractors = [];
+  
+  if (deepseekClient) extractors.push({ name: 'DeepSeek', fn: extractWithDeepSeek });
+  if (genAI) extractors.push({ name: 'Gemini', fn: extractWithGemini });
+  if (anthropic) extractors.push({ name: 'Claude', fn: extractWithClaude });
+  if (openaiClient) extractors.push({ name: 'GPT-4', fn: extractWithGPT4 });
 
-  // For testing, return mock data if PDF text extraction isn't working
-  if (pdfText.includes("Please implement proper PDF text extraction")) {
-    console.log("Using mock data for testing");
+  if (extractors.length === 0 || pdfText.includes("Please implement proper PDF text extraction")) {
+    console.log("No AI services configured or using mock data for testing");
     return {
       success: true,
       data: {
@@ -228,6 +242,16 @@ async function extractPOData(pdfText) {
   }
 
   throw new Error('All AI models failed to extract data');
+}
+
+// Create uploads directory on startup
+async function ensureUploadsDirectory() {
+  try {
+    await fs.access('uploads');
+  } catch {
+    await fs.mkdir('uploads', { recursive: true });
+    console.log('Created uploads directory');
+  }
 }
 
 // API endpoint for PDF extraction
@@ -276,7 +300,19 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'MCP Server is running' });
 });
 
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`MCP Server running on port ${PORT}`);
-});
+// Initialize server
+async function startServer() {
+  try {
+    await ensureUploadsDirectory();
+    
+    const PORT = process.env.PORT || 3001;
+    app.listen(PORT, () => {
+      console.log(`MCP Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
