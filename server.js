@@ -243,17 +243,57 @@ async function extractPOData(pdfText) {
 async function ensureUploadsDirectory() {
   try {
     await fs.access('uploads');
+    console.log('Uploads directory exists');
   } catch {
-    await fs.mkdir('uploads', { recursive: true });
-    console.log('Created uploads directory');
+    try {
+      await fs.mkdir('uploads', { recursive: true });
+      console.log('Created uploads directory');
+    } catch (mkdirError) {
+      console.error('Failed to create uploads directory:', mkdirError);
+      // Continue anyway - multer might create it
+    }
   }
 }
+
+// Root endpoint
+app.get('/', (req, res) => {
+  try {
+    res.json({ 
+      message: 'MCP Server is running', 
+      version: '1.0.0',
+      endpoints: {
+        health: '/api/health',
+        extractPO: '/api/extract-po (POST)'
+      }
+    });
+  } catch (error) {
+    console.error('Root endpoint error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  try {
+    res.json({ 
+      status: 'ok', 
+      message: 'MCP Server is running',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    });
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({ error: 'Health check failed' });
+  }
+});
 
 // API endpoint for PDF extraction
 app.post('/api/extract-po', upload.single('pdf'), async (req, res) => {
   let filePath = null;
   
   try {
+    console.log('Received extraction request');
+    
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -268,9 +308,10 @@ app.post('/api/extract-po', upload.single('pdf'), async (req, res) => {
     
     // Extract PO data using AI
     const result = await extractPOData(pdfText);
+    console.log(`Extraction complete using ${result.model}`);
     
     // Clean up uploaded file
-    await fs.unlink(filePath);
+    await fs.unlink(filePath).catch(err => console.error('Error deleting file:', err));
     
     res.json(result);
   } catch (error) {
@@ -278,11 +319,7 @@ app.post('/api/extract-po', upload.single('pdf'), async (req, res) => {
     
     // Clean up file if it exists
     if (filePath) {
-      try {
-        await fs.unlink(filePath);
-      } catch (unlinkError) {
-        console.error('Error deleting file:', unlinkError);
-      }
+      await fs.unlink(filePath).catch(err => console.error('Error deleting file:', err));
     }
     
     res.status(500).json({ 
@@ -292,9 +329,43 @@ app.post('/api/extract-po', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'MCP Server is running' });
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    error: 'Not Found', 
+    message: `Endpoint ${req.method} ${req.path} not found` 
+  });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Global error handler:', err);
+  res.status(500).json({ 
+    error: 'Internal Server Error',
+    message: err.message 
+  });
+});
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit - try to keep running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - try to keep running
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  process.exit(0);
 });
 
 // Initialize server
@@ -303,13 +374,27 @@ async function startServer() {
     await ensureUploadsDirectory();
     
     const PORT = process.env.PORT || 3001;
-    app.listen(PORT, () => {
+    
+    const server = app.listen(PORT, () => {
       console.log(`MCP Server running on port ${PORT}`);
+      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`Process ID: ${process.pid}`);
     });
+
+    // Handle server errors
+    server.on('error', (error) => {
+      console.error('Server error:', error);
+      if (error.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is already in use`);
+        process.exit(1);
+      }
+    });
+
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
   }
 }
 
+// Start the server
 startServer();
