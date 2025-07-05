@@ -1,16 +1,10 @@
 // mcp-server/server.js
-import express from 'express';
-import cors from 'cors';
-import multer from 'multer';
-import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import fs from 'fs';
-
-dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const express = require('express');
+const cors = require('cors');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+require('dotenv').config();
 
 const app = express();
 
@@ -19,7 +13,7 @@ app.use(cors());
 app.use(express.json());
 
 // Ensure uploads directory exists
-const uploadsDir = join(__dirname, 'uploads');
+const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -101,20 +95,6 @@ app.post('/api/extract-po', upload.single('pdf'), (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://0.0.0.0:${PORT}`);
-});
-
-// Keep-alive for Railway
-setInterval(() => {
-  console.log('Keep-alive ping:', new Date().toISOString());
-}, 30000); // Every 30 seconds
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

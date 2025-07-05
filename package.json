@@ -1,7 +1,6 @@
 {
   "name": "mcp-server",
   "version": "1.0.0",
-  "type": "module",
   "description": "Model Context Protocol server for multi-AI PDF extraction",
   "main": "server.js",
   "scripts": {
