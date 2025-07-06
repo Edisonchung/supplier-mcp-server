@@ -7,6 +7,18 @@ const apiRoutes = require('./routes/api.routes');
 
 const app = express();
 
+const extractionController = require('./controllers/extraction.controller');
+
+// PDF extraction route
+app.post('/api/extract-po', upload.single('pdf'), extractionController.extractFromPDF);
+
+// Image extraction route  
+app.post('/api/extract-image', upload.single('image'), extractionController.extractFromImage);
+
+// Excel extraction route
+app.post('/api/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
+
+
 // Middleware
 app.use(cors());
 app.use(express.json());
