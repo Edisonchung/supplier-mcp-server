@@ -6,6 +6,11 @@ const Anthropic = require('@anthropic-ai/sdk');
 // Initialize AI clients (use environment variables)
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const genAI = process.env.GOOGLE_AI_API_KEY ? new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY) : null;
+// Initialize DeepSeek (OpenAI-compatible)
+const deepseek = process.env.DEEPSEEK_API_KEY ? new OpenAI({ 
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: "https://api.deepseek.com/v1"
+}) : null;
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
 // Extract structured data from PDF text using AI
@@ -46,7 +51,7 @@ async function extractWithAI(text, aiProvider = 'openai') {
       case 'openai':
         if (!openai) throw new Error('OpenAI not configured');
         const completion = await openai.chat.completions.create({
-          model: 'gpt-4-turbo-preview',
+          model: 'gpt-4-turbo',
           messages: [
             { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
             { role: 'user', content: prompt }
@@ -76,6 +81,20 @@ async function extractWithAI(text, aiProvider = 'openai') {
         result = JSON.parse(response.text());
         break;
         
+
+      case 'deepseek':
+        if (!deepseek) throw new Error('DeepSeek not configured');
+        const deepseekCompletion = await deepseek.chat.completions.create({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.1,
+          response_format: { type: "json_object" }
+        });
+        result = JSON.parse(deepseekCompletion.choices[0].message.content);
+        break;
       default:
         throw new Error('Invalid AI provider');
     }
@@ -110,10 +129,11 @@ exports.extractFromPDF = async (req, res) => {
     }
 
     // Determine which AI provider to use (in order of preference)
-    let aiProvider = 'openai'; // default
-    if (!openai && anthropic) aiProvider = 'anthropic';
-    else if (!openai && !anthropic && genAI) aiProvider = 'google';
-    else if (!openai && !anthropic && !genAI) {
+    let aiProvider = 'deepseek'; // default to cost-effective DeepSeek
+    if (!deepseek && openai) aiProvider = 'openai';
+    else if (!deepseek && !openai && anthropic) aiProvider = 'anthropic';
+    else if (!deepseek && !openai && !anthropic && genAI) aiProvider = 'google';
+    else if (!deepseek && !openai && !anthropic && !genAI) {
       return res.status(500).json({
         success: false,
         message: 'No AI service configured. Please set up API keys.'
