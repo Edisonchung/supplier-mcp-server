@@ -4,6 +4,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Anthropic = require('@anthropic-ai/sdk');
 
 const { identifySupplier } = require('../utils/supplierTemplates');
+
 // Initialize AI clients (use environment variables)
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const genAI = process.env.GOOGLE_AI_API_KEY ? new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY) : null;
@@ -14,7 +15,6 @@ const deepseek = process.env.DEEPSEEK_API_KEY ? new OpenAI({
 }) : null;
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
-// Extract structured data from PDF text using AI
 // Get PTP-specific prompt
 const getPTPSpecificPrompt = () => {
   return `
@@ -74,7 +74,11 @@ const applyPTPRules = (extractedData, originalText) => {
   
   return extractedData;
 };
+
+// Extract structured data from PDF text using AI
 async function extractWithAI(text, aiProvider = 'openai') {
+  console.log(`Starting AI extraction with ${aiProvider}, text length: ${text.length} characters`);
+  
   // Detect if this is a PTP document
   const supplierInfo = identifySupplier(text);
   console.log('Detected supplier:', supplierInfo.supplier);
@@ -121,102 +125,86 @@ async function extractWithAI(text, aiProvider = 'openai') {
           THRUSTER                       <-- This is the product name, NOT "PCS"
     
     Return a JSON object with this structure:
-  {
-      "orderNumber": "string - the PO number",
-      "clientName": "string - the buyer/client company name",
-      "supplierName": "string - the supplier/vendor name",
-      "orderDate": "YYYY-MM-DD format date",
-      "deliveryDate": "YYYY-MM-DD format date",
-      "paymentTerms": "string - payment terms like Net 30, etc",
-      "currency": "string - currency code like USD, MYR, etc",
-      "items": [
-        {
-          "productName": "string - the product name/description",
-          "productCode": "string - the part number or product code",
-          "quantity": number,
-          "unitPrice": number,
-          "totalPrice": number,
-          "description": "string - additional description if any"
-        }
-      ],
-      "totalAmount": number,
-      "notes": "string - any additional notes or remarks"
-    }
-    
-    Important: 
-    - Extract ALL items found in the document
-    - Ensure numeric values are numbers, not strings
-    - If a field is not found, use empty string for strings and 0 for numbers
-    - For items array, it should never be empty if there are line items in the document
-    
-    Text to extract from:
-    ${text}
   `;
   }
 
+  // Add timeout for AI calls
+  const aiTimeout = 120000; // 2 minutes for AI processing
+  
   try {
     let result;
     const fullPrompt = prompt + '\n\nText to extract from:\n' + text;
     
-    switch (aiProvider) {
-      case 'openai':
-        if (!openai) throw new Error('OpenAI not configured');
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4-turbo',
-          messages: [
-            { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
-            { role: 'user', content: fullPrompt }
-          ],
-          temperature: 0.1,
-          response_format: { type: "json_object" }
-        });
-        result = JSON.parse(completion.choices[0].message.content);
-        break;
-        
-      case 'anthropic':
-        if (!anthropic) throw new Error('Anthropic not configured');
-        const message = await anthropic.messages.create({
-          model: 'claude-3-opus-20240229',
-          max_tokens: 1024,
-          messages: [{ role: 'user', content: fullPrompt }],
-          temperature: 0.1
-        });
-        result = JSON.parse(message.content[0].text);
-        break;
-        
-      case 'google':
-        if (!genAI) throw new Error('Google AI not configured');
-        const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-        const geminiResult = await model.generateContent(fullPrompt);
-        const response = await geminiResult.response;
-        result = JSON.parse(response.text());
-        break;
-        
-      case 'deepseek':
-        if (!deepseek) throw new Error('DeepSeek not configured');
-        const deepseekCompletion = await deepseek.chat.completions.create({
-          model: 'deepseek-chat',
-          messages: [
-            { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
-            { role: 'user', content: fullPrompt }
-          ],
-          temperature: 0.1,
-          response_format: { type: "json_object" }
-        });
-        result = JSON.parse(deepseekCompletion.choices[0].message.content);
-        break;
-      default:
-        throw new Error('Invalid AI provider');
-    }
+    // Wrap AI calls in Promise.race with timeout
+    result = await Promise.race([
+      (async () => {
+        switch (aiProvider) {
+          case 'openai':
+            if (!openai) throw new Error('OpenAI not configured');
+            console.log('Calling OpenAI API...');
+            const completion = await openai.chat.completions.create({
+              model: 'gpt-4-turbo',
+              messages: [
+                { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
+                { role: 'user', content: fullPrompt }
+              ],
+              temperature: 0.1,
+              response_format: { type: "json_object" }
+            });
+            return JSON.parse(completion.choices[0].message.content);
+            
+          case 'anthropic':
+            if (!anthropic) throw new Error('Anthropic not configured');
+            console.log('Calling Anthropic API...');
+            const message = await anthropic.messages.create({
+              model: 'claude-3-opus-20240229',
+              max_tokens: 1024,
+              messages: [{ role: 'user', content: fullPrompt }],
+              temperature: 0.1
+            });
+            return JSON.parse(message.content[0].text);
+            
+          case 'google':
+            if (!genAI) throw new Error('Google AI not configured');
+            console.log('Calling Google AI API...');
+            const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+            const geminiResult = await model.generateContent(fullPrompt);
+            const response = await geminiResult.response;
+            return JSON.parse(response.text());
+            
+          case 'deepseek':
+            if (!deepseek) throw new Error('DeepSeek not configured');
+            console.log('Calling DeepSeek API...');
+            const deepseekCompletion = await deepseek.chat.completions.create({
+              model: 'deepseek-chat',
+              messages: [
+                { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
+                { role: 'user', content: fullPrompt }
+              ],
+              temperature: 0.1,
+              response_format: { type: "json_object" }
+            });
+            return JSON.parse(deepseekCompletion.choices[0].message.content);
+            
+          default:
+            throw new Error('Invalid AI provider');
+        }
+      })(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`AI extraction timeout after ${aiTimeout/1000} seconds`)), aiTimeout)
+      )
+    ]);
     
     // Apply PTP-specific post-processing if needed
     if (supplierInfo.supplier === 'PTP') {
+      console.log('Applying PTP-specific rules...');
       result = applyPTPRules(result, text);
     }
     
+    console.log('AI extraction completed successfully');
     return result;
   } catch (error) {
-    console.error('AI extraction error:', error);
+    console.error('AI extraction error:', error.message);
     throw error;
   }
 }
@@ -224,6 +212,10 @@ async function extractWithAI(text, aiProvider = 'openai') {
 // Main extraction endpoint
 exports.extractFromPDF = async (req, res) => {
   try {
+    // Log request details
+    console.log(`[${new Date().toISOString()}] PDF extraction request received`);
+    console.log(`File: ${req.file?.originalname || 'No file'}, Size: ${req.file?.size ? (req.file.size / 1024 / 1024).toFixed(2) + 'MB' : 'N/A'}`);
+    
     if (!req.file) {
       return res.status(400).json({ 
         success: false, 
@@ -231,10 +223,29 @@ exports.extractFromPDF = async (req, res) => {
       });
     }
 
-    // Extract text from PDF
+    // Check file size
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (req.file.size > maxSize) {
+      console.log(`File too large: ${(req.file.size / 1024 / 1024).toFixed(2)}MB`);
+      return res.status(400).json({
+        success: false,
+        message: `File too large. Maximum size is 10MB, your file is ${(req.file.size / 1024 / 1024).toFixed(2)}MB`
+      });
+    }
+
+    // Extract text from PDF with progress logging
+    console.log('Starting PDF text extraction...');
+    const startTime = Date.now();
+    
     const pdfBuffer = req.file.buffer;
-    const pdfData = await pdfParse(pdfBuffer);
+    const pdfData = await pdfParse(pdfBuffer).catch(error => {
+      console.error('PDF parsing error:', error);
+      throw new Error('Failed to parse PDF. The file may be corrupted or password protected.');
+    });
+    
     const extractedText = pdfData.text;
+    const extractionTime = Date.now() - startTime;
+    console.log(`PDF parsed in ${extractionTime}ms. Text length: ${extractedText.length} characters, Pages: ${pdfData.numpages}`);
 
     if (!extractedText || extractedText.trim().length === 0) {
       return res.status(400).json({
@@ -255,8 +266,17 @@ exports.extractFromPDF = async (req, res) => {
       });
     }
 
+    console.log(`Using AI provider: ${aiProvider}`);
+    const aiStartTime = Date.now();
+
     // Extract structured data using AI
-    const structuredData = await extractWithAI(extractedText, aiProvider);
+    const structuredData = await extractWithAI(extractedText, aiProvider).catch(error => {
+      console.error('AI extraction failed:', error);
+      throw new Error('AI extraction failed. Please try again or contact support.');
+    });
+    
+    const aiTime = Date.now() - aiStartTime;
+    console.log(`AI extraction completed in ${aiTime}ms`);
 
     // Validate and enhance the extracted data
     const enhancedData = {
@@ -279,10 +299,12 @@ exports.extractFromPDF = async (req, res) => {
     if (!enhancedData.totalAmount) {
       enhancedData.totalAmount = enhancedData.items.reduce((sum, item) => sum + item.totalPrice, 0);
     }
+
     // Add supplier detection info to response
     const supplierInfo = identifySupplier(extractedText);
 
-
+    const totalTime = Date.now() - startTime;
+    console.log(`Total extraction time: ${totalTime}ms`);
 
     res.json({
       success: true,
@@ -294,7 +316,12 @@ exports.extractFromPDF = async (req, res) => {
         textLength: extractedText.length,
         supplier: supplierInfo.supplier,
         supplierConfidence: supplierInfo.confidence,
-        extractionMethod: supplierInfo.supplier === 'PTP' ? 'PTP_TEMPLATE' : 'GENERIC'
+        extractionMethod: supplierInfo.supplier === 'PTP' ? 'PTP_TEMPLATE' : 'GENERIC',
+        processingTime: {
+          pdfParsing: extractionTime,
+          aiExtraction: aiTime,
+          total: totalTime
+        }
       }
     });
 
