@@ -307,3 +307,29 @@ function processExcelData(rows) {
     confidence: 0.9
   };
 }
+
+// Extract from email files (.eml, .msg)
+exports.extractFromEmail = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No email file uploaded' 
+      });
+    }
+
+    // For now, return a message that email extraction is coming soon
+    res.json({
+      success: false,
+      message: 'Email extraction functionality coming soon. Please upload a PDF, Excel, or image file instead.',
+      data: null
+    });
+
+  } catch (error) {
+    console.error('Email extraction error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to extract data from email'
+    });
+  }
+};
