@@ -16,34 +16,20 @@ const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: proces
 // Extract structured data from PDF text using AI
 async function extractWithAI(text, aiProvider = 'openai') {
   const prompt = `
-    Extract purchase order information from the following text and return a JSON object with this structure:
-    IMPORTANT: Product names often span multiple lines. The UOM (PCS, UNI, etc) is NOT the product name.
-    Look for the actual product description which may be on the line below the part number.
-    {
-      "orderNumber": "string",
-      "clientName": "string", 
-      "supplierName": "string",
-      "orderDate": "YYYY-MM-DD",
-      "deliveryDate": "YYYY-MM-DD",
-      "paymentTerms": "string",
-      "items": [
-        {
-          "productName": "string (full product description, NOT the UOM or unit of measure)",
-          "quantity": number,
-          "unitPrice": number,
-          "totalPrice": number,
-          "description": "string"
-        }
-      ],
-      "totalAmount": number,
-      "currency": "string",
-      "notes": "string"
-    }
+    Extract purchase order information from the following text and return a JSON object.
     
-    Text to analyze:
-    ${text}
+    CRITICAL RULES FOR PRODUCT EXTRACTION:
+    1. The product name/description is usually BELOW the part number, not beside it
+    2. UOM values (PCS, UNI, SET, etc.) are NEVER the product name
+    3. Look for multi-line product descriptions after each line number
+    4. In this format: Line -> Part Number -> Product Description (on next line) -> Quantity -> UOM -> Price
     
-    Return ONLY valid JSON, no additional text.
+    Example:
+    Line  Part Number
+    1     400QCR1068                     1.00   PCS   20,500.00
+          THRUSTER                       <-- This is the product name, NOT "PCS"
+    
+    Return a JSON object with this structure:
   `;
 
   try {
