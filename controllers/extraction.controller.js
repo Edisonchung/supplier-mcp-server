@@ -17,6 +17,8 @@ const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: proces
 async function extractWithAI(text, aiProvider = 'openai') {
   const prompt = `
     Extract purchase order information from the following text and return a JSON object with this structure:
+    IMPORTANT: Product names often span multiple lines. The UOM (PCS, UNI, etc) is NOT the product name.
+    Look for the actual product description which may be on the line below the part number.
     {
       "orderNumber": "string",
       "clientName": "string", 
@@ -26,7 +28,7 @@ async function extractWithAI(text, aiProvider = 'openai') {
       "paymentTerms": "string",
       "items": [
         {
-          "productName": "string",
+          "productName": "string (full product description, NOT the UOM or unit of measure)",
           "quantity": number,
           "unitPrice": number,
           "totalPrice": number,
