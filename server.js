@@ -1,51 +1,114 @@
 const express = require('express');
 const cors = require('cors');
+const dotenv = require('dotenv');
 const path = require('path');
-require('dotenv').config();
+
+// Load environment variables
+dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Middleware for timeout handling
+app.use((req, res, next) => {
+  // Set timeout to 5 minutes for all requests
+  req.setTimeout(300000); // 5 minutes
+  res.setTimeout(300000); // 5 minutes
+  next();
+});
+
+// Body parser middleware with increased limits
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// CORS middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true
+}));
+
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
 const apiRoutes = require('./routes/api.routes');
 app.use('/api', apiRoutes);
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    timeouts: {
+      request: '5 minutes',
+      response: '5 minutes',
+      maxFileSize: '10MB'
+    },
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
 // Root endpoint
 app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Enhanced MCP Server is running',
-    version: '2.0.0',
-    endpoints: [
-      'GET /api/health',
-      'POST /api/extract-po',
-      'POST /api/extract-image',
-      'POST /api/extract-excel',
-      'POST /api/extract-email',
-      'POST /api/check-duplicate',
-      'POST /api/get-recommendations',
-      'POST /api/save-correction',
-      'POST /api/detect-category'
-    ]
+  res.json({
+    message: 'Supplier MCP Server is running',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      api: '/api',
+      extraction: '/api/purchase-orders/extract'
+    }
   });
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    success: false, 
-    message: 'Something went wrong!',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+  console.error('Error:', err.stack);
+  
+  // Multer file size error
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({
+      success: false,
+      message: 'File too large. Maximum size is 10MB'
+    });
+  }
+  
+  // Multer file type error
+  if (err.message && err.message.includes('Invalid file type')) {
+    return res.status(400).json({
+      success: false,
+      message: err.message
+    });
+  }
+  
+  res.status(500).json({
+    success: false,
+    message: err.message || 'Internal server error'
+  });
+});
+
+// Handle 404
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint not found'
   });
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`Enhanced MCP Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
+  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
 });
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+});
+
+module.exports = app;
