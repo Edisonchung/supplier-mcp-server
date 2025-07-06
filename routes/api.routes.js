@@ -18,10 +18,10 @@ router.get('/health', (req, res) => {
 });
 
 // Extraction endpoints
-router.post('/extract-po', upload.single('pdf'), extractionController.extractPO);
-router.post('/extract-image', upload.single('image'), extractionController.extractImage);
-router.post('/extract-excel', upload.single('excel'), extractionController.extractExcel);
-router.post('/extract-email', upload.single('email'), extractionController.extractEmail);
+router.post('/extract-po', upload.single('pdf'), extractionController.extractFromPDF);
+router.post('/extract-image', upload.single('image'), extractionController.extractFromImage);
+router.post('/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
+router.post('/extract-email', upload.single('email'), extractionController.extractFromEmail);
 
 // Duplicate and recommendations
 router.post('/check-duplicate', duplicateController.checkDuplicate);
