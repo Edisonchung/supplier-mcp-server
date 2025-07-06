@@ -8,12 +8,30 @@ const extractionController = require('../controllers/extraction.controller');
 const duplicateController = require('../controllers/duplicate.controller');
 const recommendationController = require('../controllers/recommendation.controller');
 
-// Health check
+/// Enhanced health check
 router.get('/health', (req, res) => {
   res.json({ 
     status: 'ok',
     message: 'Enhanced MCP Server is running',
-    features: ['pdf', 'image', 'excel', 'email', 'multi-ai', 'validation', 'recommendations']
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    features: ['pdf', 'image', 'excel', 'email', 'multi-ai', 'validation', 'recommendations', 'ptp-detection'],
+    capabilities: {
+      maxFileSize: '10MB',
+      timeouts: {
+        request: '5 minutes',
+        response: '5 minutes',
+        pdfParsing: '1 minute',
+        aiExtraction: '2 minutes'
+      },
+      aiProviders: {
+        openai: !!process.env.OPENAI_API_KEY,
+        anthropic: !!process.env.ANTHROPIC_API_KEY,
+        google: !!process.env.GOOGLE_AI_API_KEY,
+        deepseek: !!process.env.DEEPSEEK_API_KEY
+      },
+      supplierTemplates: ['PTP', 'GENERIC']
+    }
   });
 });
 
