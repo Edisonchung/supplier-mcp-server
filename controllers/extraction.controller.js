@@ -30,6 +30,36 @@ async function extractWithAI(text, aiProvider = 'openai') {
           THRUSTER                       <-- This is the product name, NOT "PCS"
     
     Return a JSON object with this structure:
+  {
+      "orderNumber": "string - the PO number",
+      "clientName": "string - the buyer/client company name",
+      "supplierName": "string - the supplier/vendor name",
+      "orderDate": "YYYY-MM-DD format date",
+      "deliveryDate": "YYYY-MM-DD format date",
+      "paymentTerms": "string - payment terms like Net 30, etc",
+      "currency": "string - currency code like USD, MYR, etc",
+      "items": [
+        {
+          "productName": "string - the product name/description",
+          "productCode": "string - the part number or product code",
+          "quantity": number,
+          "unitPrice": number,
+          "totalPrice": number,
+          "description": "string - additional description if any"
+        }
+      ],
+      "totalAmount": number,
+      "notes": "string - any additional notes or remarks"
+    }
+    
+    Important: 
+    - Extract ALL items found in the document
+    - Ensure numeric values are numbers, not strings
+    - If a field is not found, use empty string for strings and 0 for numbers
+    - For items array, it should never be empty if there are line items in the document
+    
+    Text to extract from:
+    ${text}
   `;
 
   try {
