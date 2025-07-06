@@ -1,27 +1,19 @@
-// server.js - Simplified main server file
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
-const apiRoutes = require('./routes/api.routes');
-
 const app = express();
-
-const extractionController = require('./controllers/extraction.controller');
-
-// PDF extraction route
-app.post('/api/extract-po', upload.single('pdf'), extractionController.extractFromPDF);
-
-// Image extraction route  
-app.post('/api/extract-image', upload.single('image'), extractionController.extractFromImage);
-
-// Excel extraction route
-app.post('/api/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
-
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Routes
+const apiRoutes = require('./routes/api.routes');
+app.use('/api', apiRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -31,38 +23,28 @@ app.get('/', (req, res) => {
     endpoints: [
       'GET /api/health',
       'POST /api/extract-po',
+      'POST /api/extract-image',
+      'POST /api/extract-excel',
+      'POST /api/extract-email',
       'POST /api/check-duplicate',
       'POST /api/get-recommendations',
       'POST /api/save-correction',
-      'POST /api/detect-category',
-      'POST /api/extract-image',
-      'POST /api/extract-excel'
+      'POST /api/detect-category'
     ]
   });
 });
 
-// API Routes
-app.use('/api', apiRoutes);
-
-// 404 Handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: 'Not Found',
-    message: `Cannot ${req.method} ${req.url}`
-  });
-});
-
-// Error Handler
+// Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: err.message
+  console.error(err.stack);
+  res.status(500).json({ 
+    success: false, 
+    message: 'Something went wrong!',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
 // Start server
-const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Enhanced MCP Server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
