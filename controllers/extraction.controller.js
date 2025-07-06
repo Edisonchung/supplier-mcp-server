@@ -3,6 +3,7 @@ const { OpenAI } = require('openai');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Anthropic = require('@anthropic-ai/sdk');
 
+const { identifySupplier } = require('../utils/supplierTemplates');
 // Initialize AI clients (use environment variables)
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const genAI = process.env.GOOGLE_AI_API_KEY ? new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY) : null;
@@ -14,8 +15,98 @@ const deepseek = process.env.DEEPSEEK_API_KEY ? new OpenAI({
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
 // Extract structured data from PDF text using AI
+// Get PTP-specific prompt
+const getPTPSpecificPrompt = () => {
+  return `
+    Extract purchase order information from this PT. PERINTIS TEKNOLOGI PERDANA document.
+    
+    CRITICAL PTP-SPECIFIC RULES:
+    1. This supplier uses a multi-line format where product names appear BELOW the part number line
+    2. The format is: Line Number | Part Number | Quantity | UOM | Price
+    3. The product description/name is on the NEXT LINE below, indented
+    4. NEVER use UOM values (PCS, UNI, SET, EA, etc.) as the product name
+    5. Look for descriptive text on the line following the part number
+    
+    Example PTP Format:
+    Line  Part Number
+    1     400QCR1068                     1.00   PCS   20,500.00
+          THRUSTER                       <-- This is the product name
+    2     B247K18x12x1000                10.00  UNI   325,000.00  
+          RUBBER HOSE                    <-- This is the product name
+    
+    Return ONLY valid JSON with the structure specified below.`;
+};
+
+// Apply PTP-specific post-processing rules
+const applyPTPRules = (extractedData, originalText) => {
+  if (extractedData.items) {
+    extractedData.items = extractedData.items.map(item => {
+      // Fix common PTP extraction errors
+      if (['PCS', 'UNI', 'SET', 'EA', 'UNIT'].includes(item.productName)) {
+        console.log(`Fixing PTP extraction: "${item.productName}" is not a valid product name`);
+        
+        // Try to find the real product name
+        const lines = originalText.split('\n');
+        const codeLineIndex = lines.findIndex(line => 
+          item.productCode && line.includes(item.productCode)
+        );
+        
+        if (codeLineIndex !== -1 && codeLineIndex < lines.length - 1) {
+          const nextLine = lines[codeLineIndex + 1].trim();
+          if (nextLine && 
+              !['PCS', 'UNI', 'SET', 'EA'].includes(nextLine) && 
+              !/^\d+\.?\d*$/.test(nextLine) && // Not just numbers
+              nextLine.length > 2) {
+            item.productName = nextLine;
+            console.log(`Fixed product name to: "${nextLine}"`);
+          }
+        }
+      }
+      
+      return item;
+    });
+  }
+  
+  // Ensure supplier name is correct for PTP
+  if (extractedData.supplier) {
+    extractedData.supplier.name = 'PT. PERINTIS TEKNOLOGI PERDANA';
+  }
+  
+  return extractedData;
+};
 async function extractWithAI(text, aiProvider = 'openai') {
-  const prompt = `
+  // Detect if this is a PTP document
+  const supplierInfo = identifySupplier(text);
+  console.log('Detected supplier:', supplierInfo.supplier);
+  
+  // Choose appropriate prompt based on supplier
+  let prompt;
+  if (supplierInfo.supplier === 'PTP') {
+    prompt = getPTPSpecificPrompt() + `
+    
+    Return a JSON object with this structure:
+    {
+      "poNumber": "string",
+      "dateIssued": "string",
+      "supplier": { "name": "string", "address": "string", "contact": "string" },
+      "items": [
+        {
+          "lineNumber": number,
+          "productCode": "string",
+          "productName": "string (NOT UOM)",
+          "quantity": number,
+          "unit": "string",
+          "unitPrice": number,
+          "totalPrice": number
+        }
+      ],
+      "totalAmount": number,
+      "deliveryDate": "string",
+      "paymentTerms": "string"
+    }`;
+  } else {
+    // Use the existing generic prompt
+    prompt = `
     Extract purchase order information from the following text and return a JSON object.
     
     CRITICAL RULES FOR PRODUCT EXTRACTION:
@@ -61,9 +152,11 @@ async function extractWithAI(text, aiProvider = 'openai') {
     Text to extract from:
     ${text}
   `;
+  }
 
   try {
     let result;
+    const fullPrompt = prompt + '\n\nText to extract from:\n' + text;
     
     switch (aiProvider) {
       case 'openai':
@@ -72,7 +165,7 @@ async function extractWithAI(text, aiProvider = 'openai') {
           model: 'gpt-4-turbo',
           messages: [
             { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
-            { role: 'user', content: prompt }
+            { role: 'user', content: fullPrompt }
           ],
           temperature: 0.1,
           response_format: { type: "json_object" }
@@ -85,7 +178,7 @@ async function extractWithAI(text, aiProvider = 'openai') {
         const message = await anthropic.messages.create({
           model: 'claude-3-opus-20240229',
           max_tokens: 1024,
-          messages: [{ role: 'user', content: prompt }],
+          messages: [{ role: 'user', content: fullPrompt }],
           temperature: 0.1
         });
         result = JSON.parse(message.content[0].text);
@@ -94,19 +187,18 @@ async function extractWithAI(text, aiProvider = 'openai') {
       case 'google':
         if (!genAI) throw new Error('Google AI not configured');
         const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-        const geminiResult = await model.generateContent(prompt);
+        const geminiResult = await model.generateContent(fullPrompt);
         const response = await geminiResult.response;
         result = JSON.parse(response.text());
         break;
         
-
       case 'deepseek':
         if (!deepseek) throw new Error('DeepSeek not configured');
         const deepseekCompletion = await deepseek.chat.completions.create({
           model: 'deepseek-chat',
           messages: [
             { role: 'system', content: 'You are a data extraction expert. Always return valid JSON.' },
-            { role: 'user', content: prompt }
+            { role: 'user', content: fullPrompt }
           ],
           temperature: 0.1,
           response_format: { type: "json_object" }
@@ -115,6 +207,11 @@ async function extractWithAI(text, aiProvider = 'openai') {
         break;
       default:
         throw new Error('Invalid AI provider');
+    }
+    
+    // Apply PTP-specific post-processing if needed
+    if (supplierInfo.supplier === 'PTP') {
+      result = applyPTPRules(result, text);
     }
     
     return result;
@@ -182,6 +279,10 @@ exports.extractFromPDF = async (req, res) => {
     if (!enhancedData.totalAmount) {
       enhancedData.totalAmount = enhancedData.items.reduce((sum, item) => sum + item.totalPrice, 0);
     }
+    // Add supplier detection info to response
+    const supplierInfo = identifySupplier(extractedText);
+
+
 
     res.json({
       success: true,
@@ -190,7 +291,10 @@ exports.extractFromPDF = async (req, res) => {
         fileName: req.file.originalname,
         fileSize: req.file.size,
         pagesCount: pdfData.numpages,
-        textLength: extractedText.length
+        textLength: extractedText.length,
+        supplier: supplierInfo.supplier,
+        supplierConfidence: supplierInfo.confidence,
+        extractionMethod: supplierInfo.supplier === 'PTP' ? 'PTP_TEMPLATE' : 'GENERIC'
       }
     });
 
