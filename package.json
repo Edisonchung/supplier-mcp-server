@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
+    "lint": "eslint .",
+    "test": "jest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.17.2",
