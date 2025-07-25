@@ -15,6 +15,403 @@ const deepseek = process.env.DEEPSEEK_API_KEY ? new OpenAI({
 }) : null;
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 
+// ================================
+// ENHANCED PI EXTRACTION FUNCTIONS
+// ================================
+
+/**
+ * Detect document type from content
+ */
+function detectDocumentType(text) {
+  const upperText = text.toUpperCase();
+  
+  // Proforma Invoice indicators
+  const piIndicators = [
+    'PROFORMA INVOICE',
+    'COMMERCIAL PROFORMA INVOICE',
+    'QUOTE NO',
+    'QUOTE NUMBER',
+    'PI NUMBER',
+    'SHIPPER',
+    'RECEIVER',
+    'PORT OF LOADING',
+    'FREIGHT',
+    'DDP',
+    'EXW UNIT PRICE'
+  ];
+  
+  // Purchase Order indicators
+  const poIndicators = [
+    'PURCHASE ORDER',
+    'PO NUMBER',
+    'ORDER NUMBER',
+    'DELIVERY TO',
+    'BILL TO'
+  ];
+  
+  const piScore = piIndicators.filter(indicator => upperText.includes(indicator)).length;
+  const poScore = poIndicators.filter(indicator => upperText.includes(indicator)).length;
+  
+  console.log(`Document type detection - PI score: ${piScore}, PO score: ${poScore}`);
+  
+  if (piScore > poScore) {
+    return 'proforma_invoice';
+  } else if (poScore > 0) {
+    return 'purchase_order';
+  } else {
+    return 'unknown';
+  }
+}
+
+/**
+ * Enhanced Proforma Invoice extraction specifically for Chinese suppliers
+ */
+function extractProformaInvoiceItems(text) {
+  console.log('=== ENHANCED PI TABLE EXTRACTION ===');
+  
+  const items = [];
+  const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+  
+  let inItemsSection = false;
+  let headerRowIndex = -1;
+  
+  // Find the items table section
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].toLowerCase();
+    
+    // Detect start of items table - Chinese supplier format
+    if ((line.includes('sr no') || line.includes('sr.no')) && 
+        line.includes('items name') && 
+        (line.includes('model') || line.includes('brand'))) {
+      inItemsSection = true;
+      headerRowIndex = i;
+      console.log(`Found PI table header at line ${i}: ${lines[i]}`);
+      continue;
+    }
+    
+    // Alternative header detection
+    if (line.includes('quantity') && line.includes('unit price') && line.includes('total price')) {
+      inItemsSection = true;
+      headerRowIndex = i;
+      console.log(`Found alternative PI table header at line ${i}: ${lines[i]}`);
+      continue;
+    }
+    
+    // Detect end of items table
+    if (inItemsSection && (
+        line.includes('total') && (line.includes('$') || line.includes('usd')) ||
+        line.includes('freight') ||
+        line.includes('terms and conditions') ||
+        line.includes('payment terms')
+      )) {
+      console.log(`End of PI table at line ${i}: ${lines[i]}`);
+      break;
+    }
+    
+    // Extract item rows
+    if (inItemsSection && headerRowIndex > -1) {
+      // Look for lines that start with a number (Sr NO)
+      const itemNumberMatch = line.match(/^(\d+)\s+(.+)/);
+      
+      if (itemNumberMatch) {
+        const srNo = parseInt(itemNumberMatch[1]);
+        const remainingText = itemNumberMatch[2];
+        
+        console.log(`Processing PI item ${srNo}: ${remainingText}`);
+        
+        const item = parsePIItemRow(srNo, remainingText, lines, i);
+        
+        if (item) {
+          items.push(item);
+          console.log(`Extracted PI item:`, item);
+        }
+      }
+    }
+  }
+  
+  console.log(`Total PI items extracted: ${items.length}`);
+  return items;
+}
+
+/**
+ * Parse a single PI item row with enhanced pattern matching for Chinese suppliers
+ */
+function parsePIItemRow(srNo, rowText, allLines, currentIndex) {
+  try {
+    // Handle multi-line item descriptions
+    let fullItemText = rowText;
+    
+    // Check if next line might be continuation (no leading number)
+    if (currentIndex + 1 < allLines.length) {
+      const nextLine = allLines[currentIndex + 1].trim();
+      if (nextLine && !nextLine.match(/^\d+\s+/) && !nextLine.toLowerCase().includes('total')) {
+        fullItemText += ' ' + nextLine;
+        console.log(`Combined with next line: ${fullItemText}`);
+      }
+    }
+    
+    // Enhanced regex patterns for Chinese supplier PI formats
+    const patterns = [
+      // Pattern 1: BEARING 32222 SKF 100 $ 13.00 7.43KG $ 1,300.00 743KG
+      /^(\w+)\s+([A-Z0-9\/-]+)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG/i,
+      
+      // Pattern 2: BEARING HM518445/10 SKF 100 $ 6.00 2.88KG $ 600.00 288KG
+      /^(\w+)\s+([A-Z0-9\/-]+)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG/i,
+      
+      // Pattern 3: BEARING 6309-2Z SKF 10 $ 4.63 0.88KG $ 46.31 8.8KG
+      /^(\w+)\s+([A-Z0-9\/-Z]+)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG/i,
+      
+      // Pattern 4: For items without clear separators
+      /(\w+)\s+([A-Z0-9\/-Z]+)\s+([A-Z]+).*?(\d+).*?\$\s*([\d,]+\.?\d*).*?\$\s*([\d,]+\.?\d*)/i,
+      
+      // Pattern 5: More flexible pattern for complex models
+      /^(\w+)\s+([A-Z0-9\/-]+(?:\s[A-Z0-9\/-]+)*)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*).*?\$\s*([\d,]+\.?\d*)/i
+    ];
+    
+    for (const pattern of patterns) {
+      const match = fullItemText.match(pattern);
+      
+      if (match) {
+        const [, itemType, model, brand, quantity, unitPriceStr, , totalPriceStr] = match;
+        
+        // Clean and parse numbers
+        const qty = parseInt(quantity) || 0;
+        const unitPrice = parseFloat(unitPriceStr.replace(/,/g, '')) || 0;
+        const totalPrice = parseFloat(totalPriceStr.replace(/,/g, '')) || 0;
+        
+        const item = {
+          lineNumber: srNo,
+          productCode: model.trim(),
+          productName: `${itemType} ${model}`.trim(),
+          brand: brand.trim(),
+          quantity: qty,
+          unit: 'PCS',
+          unitPrice: unitPrice,
+          totalPrice: totalPrice,
+          
+          // Additional fields for PI
+          category: itemType.toLowerCase(),
+          specifications: fullItemText // Keep original for reference
+        };
+        
+        console.log(`Successfully parsed PI item ${srNo}:`, item);
+        return item;
+      }
+    }
+    
+    // Fallback: extract what we can
+    console.log(`Using fallback parsing for PI item ${srNo}: ${fullItemText}`);
+    
+    // Extract numbers and basic info
+    const numbers = fullItemText.match(/[\d,]+\.?\d*/g) || [];
+    const words = fullItemText.split(/\s+/).filter(w => w.length > 0);
+    
+    return {
+      lineNumber: srNo,
+      productCode: extractProductCode(words),
+      productName: extractProductName(words),
+      brand: extractBrand(words),
+      quantity: numbers.length > 0 ? parseInt(numbers[0].replace(/,/g, '')) : 1,
+      unit: 'PCS',
+      unitPrice: numbers.length > 1 ? parseFloat(numbers[1].replace(/,/g, '')) : 0,
+      totalPrice: numbers.length > 2 ? parseFloat(numbers[2].replace(/,/g, '')) : 0,
+      specifications: fullItemText
+    };
+    
+  } catch (error) {
+    console.error(`Error parsing PI item ${srNo}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Helper functions for fallback parsing
+ */
+function extractProductCode(words) {
+  // Look for alphanumeric codes (like 32222, HM518445/10, 6309-2Z)
+  for (const word of words) {
+    if (/^[A-Z0-9\/-]+$/i.test(word) && word.length > 2) {
+      return word;
+    }
+  }
+  return words[1] || '';
+}
+
+function extractProductName(words) {
+  // Usually starts with the item type (BEARING, etc.)
+  const itemType = words.find(w => /^[A-Z]+$/i.test(w) && w.length > 3);
+  const productCode = extractProductCode(words);
+  
+  if (itemType && productCode) {
+    return `${itemType} ${productCode}`;
+  }
+  
+  return words.slice(0, 3).join(' ');
+}
+
+function extractBrand(words) {
+  // Common bearing brands
+  const knownBrands = ['SKF', 'FAG', 'NSK', 'TIMKEN', 'NTN', 'KOYO', 'MCGILL'];
+  
+  for (const word of words) {
+    if (knownBrands.includes(word.toUpperCase())) {
+      return word.toUpperCase();
+    }
+  }
+  
+  return '';
+}
+
+/**
+ * Extract PI-specific information
+ */
+function extractPIInfo(text) {
+  console.log('Extracting PI-specific information...');
+  
+  const piData = {
+    documentType: 'proforma_invoice'
+  };
+  
+  // Extract PI/Quote number
+  const piNumberPatterns = [
+    /QUOTE NO\.?:\s*([A-Z0-9-]+)/i,
+    /PI NO\.?:\s*([A-Z0-9-]+)/i,
+    /INVOICE NO\.?:\s*([A-Z0-9-]+)/i,
+    /PROFORMA NO\.?:\s*([A-Z0-9-]+)/i
+  ];
+  
+  for (const pattern of piNumberPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      piData.piNumber = match[1];
+      break;
+    }
+  }
+  
+  // Extract date
+  const dateMatch = text.match(/DATE:\s*(\d{4})[.\-\/](\d{2})[.\-\/](\d{2})/);
+  if (dateMatch) {
+    piData.date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
+  }
+  
+  // Extract supplier info
+  piData.supplier = extractSupplierInfo(text);
+  
+  // Extract buyer info
+  piData.buyer = extractBuyerInfo(text);
+  
+  // Extract items using enhanced method
+  piData.items = extractProformaInvoiceItems(text);
+  
+  // Extract totals
+  piData.totals = extractPITotals(text);
+  
+  // Extract terms
+  piData.terms = extractPITerms(text);
+  
+  console.log(`PI extraction complete. Found ${piData.items.length} items.`);
+  return piData;
+}
+
+function extractSupplierInfo(text) {
+  const lines = text.split('\n');
+  let inShipperSection = false;
+  const supplier = {};
+  
+  for (const line of lines) {
+    if (line.includes('SHIPPER') || line.includes('SELLER')) {
+      inShipperSection = true;
+      continue;
+    }
+    
+    if (line.includes('RECEIVER') || line.includes('BUYER')) {
+      inShipperSection = false;
+      continue;
+    }
+    
+    if (inShipperSection) {
+      if (line.includes('Company Name:')) {
+        supplier.name = line.replace(/Company Name:\s*/, '').trim();
+      } else if (line.includes('Contact Person:')) {
+        supplier.contact = line.replace(/Contact Person:\s*/, '').trim();
+      } else if (line.includes('E-MAIL:') || line.includes('Email:')) {
+        supplier.email = line.replace(/E-MAIL:\s*/, '').replace(/Email:\s*/, '').trim();
+      } else if (line.includes('Phone:')) {
+        supplier.phone = line.replace(/Phone:\s*/, '').trim();
+      } else if (line.includes('Address:')) {
+        supplier.address = line.replace(/Address:\s*/, '').trim();
+      }
+    }
+  }
+  
+  return supplier;
+}
+
+function extractBuyerInfo(text) {
+  const lines = text.split('\n');
+  let inReceiverSection = false;
+  const buyer = {};
+  
+  for (const line of lines) {
+    if (line.includes('RECEIVER') || line.includes('BUYER')) {
+      inReceiverSection = true;
+      continue;
+    }
+    
+    if (line.includes('TERMS AND CONDITIONS') || line.includes('Sr NO')) {
+      inReceiverSection = false;
+      continue;
+    }
+    
+    if (inReceiverSection) {
+      if (line.includes('Company Name:')) {
+        buyer.name = line.replace(/Company Name:\s*/, '').trim();
+      } else if (line.includes('Contact Person:')) {
+        buyer.contact = line.replace(/Contact Person:\s*/, '').trim();
+      } else if (line.includes('Email:')) {
+        buyer.email = line.replace(/Email:\s*/, '').trim();
+      } else if (line.includes('PH:')) {
+        buyer.phone = line.replace(/PH:\s*/, '').trim();
+      } else if (line.includes('Address:')) {
+        buyer.address = line.replace(/Address:\s*/, '').trim();
+      }
+    }
+  }
+  
+  return buyer;
+}
+
+function extractPITotals(text) {
+  const subtotalMatch = text.match(/TOTAL\s+\$\s*([\d,]+\.?\d*)/i);
+  const freightMatch = text.match(/FREIGHT\s+\$\s*([\d,]+\.?\d*)/i);
+  const totalCostMatch = text.match(/TOTAL COST\s+\$\s*([\d,]+\.?\d*)/i);
+  
+  return {
+    subtotal: subtotalMatch ? parseFloat(subtotalMatch[1].replace(/,/g, '')) : 0,
+    freight: freightMatch ? parseFloat(freightMatch[1].replace(/,/g, '')) : 0,
+    totalCost: totalCostMatch ? parseFloat(totalCostMatch[1].replace(/,/g, '')) : 0,
+    currency: 'USD'
+  };
+}
+
+function extractPITerms(text) {
+  const paymentMatch = text.match(/Terms of payment[：:]\s*([^;\n]+)/i);
+  const deliveryMatch = text.match(/Delivery time[：:]\s*([^;\n]+)/i);
+  const brandMatch = text.match(/Brand[：:]\s*([^;\n]+)/i);
+  const packagingMatch = text.match(/Packaging[：:]\s*([^;\n]+)/i);
+  
+  return {
+    payment: paymentMatch ? paymentMatch[1].trim() : '',
+    delivery: deliveryMatch ? deliveryMatch[1].trim() : '',
+    brand: brandMatch ? brandMatch[1].trim() : '',
+    packaging: packagingMatch ? packagingMatch[1].trim() : ''
+  };
+}
+
+// ================================
+// EXISTING FUNCTIONS (UPDATED)
+// ================================
+
 // Get PTP-specific prompt
 const getPTPSpecificPrompt = () => {
   return `
@@ -35,6 +432,28 @@ const getPTPSpecificPrompt = () => {
           RUBBER HOSE                    <-- This is the product name
     
     Return ONLY valid JSON with the structure specified below.`;
+};
+
+// Get Proforma Invoice specific prompt
+const getPISpecificPrompt = () => {
+  return `
+    Extract proforma invoice information from this Chinese supplier document.
+    
+    CRITICAL PI-SPECIFIC RULES:
+    1. This is a PROFORMA INVOICE (PI) from a Chinese supplier to Malaysian buyer
+    2. Table format: Sr NO | ITEMS NAME | MODEL | BRAND | QUANTITY | UNIT PRICE | TOTAL PRICE
+    3. Extract ALL items from the table, not just the first one
+    4. Items are in format: BEARING 32222 SKF 100 $13.00 $1,300.00
+    5. Currency is USD with $ symbol
+    6. Look for SHIPPER (supplier) and RECEIVER (buyer) sections
+    7. Extract freight costs and total costs separately
+    
+    Example PI Format:
+    Sr NO ITEMS NAME MODEL BRAND QUANTITY UNIT PRICE TOTAL PRICE
+    1     BEARING    32222 SKF   100      $ 13.00    $ 1,300.00
+    2     BEARING    HM518445/10 SKF 100  $ 6.00     $ 600.00
+    
+    Return ONLY valid JSON with the proforma_invoice structure specified below.`;
 };
 
 // Apply PTP-specific post-processing rules
@@ -75,43 +494,112 @@ const applyPTPRules = (extractedData, originalText) => {
   return extractedData;
 };
 
-// Extract structured data from PDF text using AI
-async function extractWithAI(text, aiProvider = 'openai') {
+// Enhanced AI extraction with document type detection
+async function extractWithAI(text, aiProvider = 'deepseek') {
   console.log(`Starting AI extraction with ${aiProvider}, text length: ${text.length} characters`);
+  
+  // Detect document type
+  const documentType = detectDocumentType(text);
+  console.log(`Detected document type: ${documentType}`);
+  
+  // If it's a PI, use enhanced PI extraction first
+  if (documentType === 'proforma_invoice') {
+    console.log('Using enhanced PI extraction method...');
+    try {
+      const piData = extractPIInfo(text);
+      if (piData.items && piData.items.length > 0) {
+        console.log(`Enhanced PI extraction successful: ${piData.items.length} items found`);
+        return {
+          proforma_invoice: piData
+        };
+      }
+    } catch (error) {
+      console.log('Enhanced PI extraction failed, falling back to AI:', error.message);
+    }
+  }
   
   // Detect if this is a PTP document
   const supplierInfo = identifySupplier(text);
   console.log('Detected supplier:', supplierInfo.supplier);
   
-  // Choose appropriate prompt based on supplier
+  // Choose appropriate prompt based on document type and supplier
   let prompt;
-  if (supplierInfo.supplier === 'PTP') {
-    prompt = getPTPSpecificPrompt() + `
-    
-    Return a JSON object with this structure:
+  let responseStructure;
+  
+  if (documentType === 'proforma_invoice') {
+    prompt = getPISpecificPrompt();
+    responseStructure = `
     {
-      "poNumber": "string",
-      "dateIssued": "string",
-      "supplier": { "name": "string", "address": "string", "contact": "string" },
-      "items": [
-        {
-          "lineNumber": number,
-          "productCode": "string",
-          "productName": "string (NOT UOM)",
-          "quantity": number,
-          "unit": "string",
-          "unitPrice": number,
-          "totalPrice": number
+      "proforma_invoice": {
+        "piNumber": "string",
+        "date": "string",
+        "supplier": { 
+          "name": "string", 
+          "contact": "string",
+          "email": "string",
+          "phone": "string",
+          "address": "string"
+        },
+        "buyer": { 
+          "name": "string", 
+          "contact": "string",
+          "email": "string",
+          "phone": "string",
+          "address": "string"
+        },
+        "items": [
+          {
+            "lineNumber": number,
+            "productCode": "string",
+            "productName": "string",
+            "brand": "string",
+            "quantity": number,
+            "unit": "string",
+            "unitPrice": number,
+            "totalPrice": number
+          }
+        ],
+        "totals": {
+          "subtotal": number,
+          "freight": number,
+          "totalCost": number,
+          "currency": "string"
+        },
+        "terms": {
+          "payment": "string",
+          "delivery": "string",
+          "packaging": "string"
         }
-      ],
-      "totalAmount": number,
-      "deliveryDate": "string",
-      "paymentTerms": "string"
+      }
+    }`;
+  } else if (supplierInfo.supplier === 'PTP') {
+    prompt = getPTPSpecificPrompt();
+    responseStructure = `
+    {
+      "purchase_order": {
+        "poNumber": "string",
+        "dateIssued": "string",
+        "supplier": { "name": "string", "address": "string", "contact": "string" },
+        "items": [
+          {
+            "lineNumber": number,
+            "productCode": "string",
+            "productName": "string (NOT UOM)",
+            "quantity": number,
+            "unit": "string",
+            "unitPrice": number,
+            "totalPrice": number
+          }
+        ],
+        "totalAmount": number,
+        "deliveryDate": "string",
+        "paymentTerms": "string"
+      }
     }`;
   } else {
     // Use the existing generic prompt
     prompt = `
-    Extract purchase order information from the following text and return a JSON object.
+    Extract ${documentType === 'proforma_invoice' ? 'proforma invoice' : 'purchase order'} information from the following text and return a JSON object.
     
     CRITICAL RULES FOR PRODUCT EXTRACTION:
     1. The product name/description is usually BELOW the part number, not beside it
@@ -123,9 +611,14 @@ async function extractWithAI(text, aiProvider = 'openai') {
     Line  Part Number
     1     400QCR1068                     1.00   PCS   20,500.00
           THRUSTER                       <-- This is the product name, NOT "PCS"
+    `;
     
-    Return a JSON object with this structure:
-  `;
+    responseStructure = `
+    {
+      "${documentType === 'proforma_invoice' ? 'proforma_invoice' : 'purchase_order'}": {
+        // Standard structure based on document type
+      }
+    }`;
   }
 
   // Add timeout for AI calls
@@ -133,7 +626,7 @@ async function extractWithAI(text, aiProvider = 'openai') {
   
   try {
     let result;
-    const fullPrompt = prompt + '\n\nText to extract from:\n' + text;
+    const fullPrompt = prompt + '\n\nReturn a JSON object with this structure:\n' + responseStructure + '\n\nText to extract from:\n' + text;
     
     // Wrap AI calls in Promise.race with timeout
     result = await Promise.race([
@@ -198,7 +691,9 @@ async function extractWithAI(text, aiProvider = 'openai') {
     // Apply PTP-specific post-processing if needed
     if (supplierInfo.supplier === 'PTP') {
       console.log('Applying PTP-specific rules...');
-      result = applyPTPRules(result, text);
+      if (result.purchase_order) {
+        result.purchase_order = applyPTPRules(result.purchase_order, text);
+      }
     }
     
     console.log('AI extraction completed successfully');
@@ -278,25 +773,52 @@ exports.extractFromPDF = async (req, res) => {
     const aiTime = Date.now() - aiStartTime;
     console.log(`AI extraction completed in ${aiTime}ms`);
 
+    // Detect document type for response formatting
+    const documentType = detectDocumentType(extractedText);
+    
     // Validate and enhance the extracted data
-    const enhancedData = {
-      ...structuredData,
-      extractedAt: new Date().toISOString(),
-      aiProvider: aiProvider,
-      confidence: 0.85, // You can implement confidence scoring based on data completeness
-      items: structuredData.items?.map(item => ({
+    let enhancedData;
+    if (structuredData.proforma_invoice) {
+      enhancedData = {
+        ...structuredData.proforma_invoice,
+        extractedAt: new Date().toISOString(),
+        aiProvider: aiProvider,
+        confidence: 0.85,
+        documentType: 'proforma_invoice'
+      };
+    } else if (structuredData.purchase_order) {
+      enhancedData = {
+        ...structuredData.purchase_order,
+        extractedAt: new Date().toISOString(),
+        aiProvider: aiProvider,
+        confidence: 0.85,
+        documentType: 'purchase_order'
+      };
+    } else {
+      // Legacy format support
+      enhancedData = {
+        ...structuredData,
+        extractedAt: new Date().toISOString(),
+        aiProvider: aiProvider,
+        confidence: 0.85,
+        documentType: documentType
+      };
+    }
+
+    // Ensure items array exists and is properly formatted
+    if (enhancedData.items) {
+      enhancedData.items = enhancedData.items.map(item => ({
         ...item,
         productName: item.productName || 'Unknown Product',
         quantity: parseInt(item.quantity) || 1,
         unitPrice: parseFloat(item.unitPrice) || 0,
         totalPrice: parseFloat(item.totalPrice) || (item.quantity * item.unitPrice),
         description: item.description || ''
-      })) || [],
-      recommendations: generateRecommendations(structuredData)
-    };
+      }));
+    }
 
     // Calculate total if not provided
-    if (!enhancedData.totalAmount) {
+    if (!enhancedData.totalAmount && enhancedData.items) {
       enhancedData.totalAmount = enhancedData.items.reduce((sum, item) => sum + item.totalPrice, 0);
     }
 
@@ -314,9 +836,11 @@ exports.extractFromPDF = async (req, res) => {
         fileSize: req.file.size,
         pagesCount: pdfData.numpages,
         textLength: extractedText.length,
+        documentType: documentType,
         supplier: supplierInfo.supplier,
         supplierConfidence: supplierInfo.confidence,
-        extractionMethod: supplierInfo.supplier === 'PTP' ? 'PTP_TEMPLATE' : 'GENERIC',
+        extractionMethod: documentType === 'proforma_invoice' ? 'PI_ENHANCED' : 
+                         supplierInfo.supplier === 'PTP' ? 'PTP_TEMPLATE' : 'GENERIC',
         processingTime: {
           pdfParsing: extractionTime,
           aiExtraction: aiTime,
@@ -340,18 +864,18 @@ function generateRecommendations(data) {
   const recommendations = [];
   
   // Check for missing critical fields
-  if (!data.orderNumber) {
+  if (!data.piNumber && !data.poNumber && !data.orderNumber) {
     recommendations.push({
-      field: 'orderNumber',
-      message: 'Order number not found. Please verify.',
+      field: 'documentNumber',
+      message: 'Document number not found. Please verify.',
       severity: 'high'
     });
   }
   
-  if (!data.deliveryDate) {
+  if (!data.deliveryDate && !data.date) {
     recommendations.push({
-      field: 'deliveryDate',
-      message: 'No delivery date specified. Consider adding one.',
+      field: 'date',
+      message: 'No date specified. Consider adding one.',
       severity: 'medium'
     });
   }
@@ -376,7 +900,7 @@ function generateRecommendations(data) {
   });
   
   // Payment terms validation
-  if (!data.paymentTerms) {
+  if (!data.paymentTerms && !data.terms?.payment) {
     recommendations.push({
       field: 'paymentTerms',
       message: 'Payment terms not specified. Default to 30 days?',
@@ -386,6 +910,10 @@ function generateRecommendations(data) {
   
   return recommendations;
 }
+
+// ================================
+// OTHER EXTRACTION METHODS (UNCHANGED)
+// ================================
 
 // Extract from image files (OCR)
 exports.extractFromImage = async (req, res) => {
