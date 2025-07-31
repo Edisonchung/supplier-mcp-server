@@ -49,4 +49,6 @@ router.post('/get-recommendations', recommendationController.getRecommendations)
 router.post('/save-correction', recommendationController.saveCorrection);
 router.post('/detect-category', recommendationController.detectCategory);
 
+router.post('/bank-payments/extract', upload.single('file'), extractionController.extractBankPaymentSlip);
+
 module.exports = router;
