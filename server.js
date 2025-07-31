@@ -44,7 +44,13 @@ app.get('/health', (req, res) => {
       response: '5 minutes',
       maxFileSize: '10MB'
     },
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    endpoints: {
+      health: '/health',
+      api: '/api',
+      extraction: '/api/purchase-orders/extract',
+      bankPayment: '/api/bank-payments/extract' // NEW: Bank payment endpoint
+    }
   });
 });
 
@@ -56,7 +62,8 @@ app.get('/', (req, res) => {
     endpoints: {
       health: '/health',
       api: '/api',
-      extraction: '/api/purchase-orders/extract'
+      extraction: '/api/purchase-orders/extract',
+      bankPaymentExtraction: '/api/bank-payments/extract' // NEW: Bank payment endpoint
     }
   });
 });
@@ -101,6 +108,7 @@ const server = app.listen(PORT, () => {
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`); // NEW: Log bank payment endpoint
 });
 
 // Graceful shutdown
