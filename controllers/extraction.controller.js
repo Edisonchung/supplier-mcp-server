@@ -911,6 +911,225 @@ function generateRecommendations(data) {
   return recommendations;
 }
 
+
+// Bank Payment Slip extraction support
+
+/**
+ * Extract Bank Payment Slip data using AI
+ */
+exports.extractBankPaymentSlip = async (req, res) => {
+  try {
+    console.log('🏦 Bank Payment Slip extraction request received');
+
+    if (!req.file) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No file uploaded' 
+      });
+    }
+
+    const startTime = Date.now();
+
+    // Extract text from PDF
+    const pdfData = await pdfParse(req.file.buffer);
+    const extractedText = pdfData.text;
+    
+    console.log('📄 Extracted text length:', extractedText.length);
+
+    // Use AI to structure the bank payment data
+    const aiPrompt = `
+You are an expert at extracting structured data from Hong Leong Bank payment slips.
+
+Extract the following information from this bank payment slip text and return ONLY a valid JSON object:
+
+Text:
+${extractedText}
+
+Return JSON in this exact format:
+{
+  "bank_payment": {
+    "reference_number": "C716200525115916",
+    "payment_date": "20/05/2025",
+    "payment_amount": 1860.00,
+    "paid_currency": "USD",
+    "debit_amount": 8230.50,
+    "debit_currency": "MYR",
+    "exchange_rate": 4.4240,
+    "bank_name": "Hong Leong Bank",
+    "account_number": "17301010259",
+    "account_name": "FLOW SOLUTION SDN BH",
+    "beneficiary_name": "Qingzhou Tianhong Electromechanical Co. LTD",
+    "beneficiary_bank": "JPMorgan Chase Bank NA",
+    "beneficiary_country": "HONG KONG",
+    "payment_details": "TH-202500135,202500134,202500182",
+    "bank_charges": 50.00,
+    "status": "In Process at Bank"
+  },
+  "confidence": 0.95,
+  "document_type": "bank_payment_slip"
+}
+
+Extract all numerical values as numbers, not strings. If any field is not found, use null.
+Return ONLY the JSON object, no explanations or markdown.
+`;
+
+    // Call AI service (DeepSeek)
+    let aiResponse;
+    try {
+      if (deepseek) {
+        const completion = await deepseek.chat.completions.create({
+          model: "deepseek-chat",
+          messages: [
+            {
+              role: "user", 
+              content: aiPrompt
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 2000
+        });
+
+        const aiResult = completion.choices[0].message.content.trim();
+        console.log('🤖 AI Raw Response:', aiResult);
+
+        // Parse AI response
+        const cleanedResponse = aiResult
+          .replace(/```json/g, '')
+          .replace(/```/g, '')
+          .trim();
+
+        aiResponse = JSON.parse(cleanedResponse);
+        console.log('✅ AI Parsed Response:', aiResponse);
+
+      } else {
+        throw new Error('DeepSeek API not configured');
+      }
+    } catch (aiError) {
+      console.error('❌ AI extraction failed:', aiError);
+      
+      // Fallback to pattern-based extraction
+      aiResponse = extractBankPaymentFallback(extractedText);
+    }
+
+    const extractionTime = Date.now() - startTime;
+
+    // Return structured response
+    res.json({
+      success: true,
+      data: aiResponse,
+      processing_time: extractionTime,
+      metadata: {
+        file_name: req.file.originalname,
+        file_size: req.file.size,
+        extraction_method: aiResponse.confidence > 0.8 ? 'ai_extraction' : 'pattern_fallback',
+        processed_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Bank payment slip extraction error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to extract bank payment data',
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+/**
+ * Fallback pattern-based extraction for bank payment slips
+ */
+function extractBankPaymentFallback(text) {
+  console.log('🔄 Using pattern-based fallback extraction');
+
+  const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  
+  // Helper function to extract field values
+  const extractField = (patterns, defaultValue = null) => {
+    const patternArray = Array.isArray(patterns) ? patterns : [patterns];
+    
+    for (const pattern of patternArray) {
+      for (const line of lines) {
+        const match = line.match(pattern);
+        if (match && match[1]) {
+          return match[1].trim();
+        }
+      }
+    }
+    return defaultValue;
+  };
+
+  // Helper function to extract amounts
+  const extractAmount = (patterns) => {
+    const amountStr = extractField(patterns);
+    if (!amountStr) return null;
+    
+    const cleanAmount = amountStr.replace(/[^\d.-]/g, '');
+    const amount = parseFloat(cleanAmount);
+    return isNaN(amount) ? null : amount;
+  };
+
+  // Extract data using patterns
+  const referenceNumber = extractField([
+    /Reference Number[:\s]*([A-Z0-9]+)/i,
+    /([C][0-9]{12,})/i
+  ]);
+
+  const paymentDate = extractField([
+    /Payment Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /(\d{1,2}\/\d{1,2}\/\d{4})/i
+  ]);
+
+  const paidAmount = extractAmount([
+    /Debit Amount[:\s]*([0-9.,]+).*?USD/i,
+    /([0-9.,]+).*?USD/i
+  ]);
+
+  const debitAmount = extractAmount([
+    /Payment Amount[:\s]*([0-9.,]+).*?MYR/i,
+    /([0-9.,]+).*?MYR/i
+  ]);
+
+  const exchangeRate = extractAmount([
+    /Exchange Rate[:\s]*([0-9.,]+)/i
+  ]);
+
+  const beneficiaryName = extractField([
+    /Beneficiary Name[:\s]*(.+?)(?:\n|$)/i,
+    /Beneficiary[:\s]*(.+?)(?:\n|$)/i
+  ]);
+
+  const paymentDetails = extractField([
+    /Payment Details[:\s]*(.+?)(?:\n|$)/i,
+    /Details[:\s]*(.+?)(?:\n|$)/i
+  ]);
+
+  return {
+    bank_payment: {
+      reference_number: referenceNumber,
+      payment_date: paymentDate,
+      payment_amount: paidAmount,
+      paid_currency: 'USD',
+      debit_amount: debitAmount,
+      debit_currency: 'MYR',
+      exchange_rate: exchangeRate,
+      bank_name: 'Hong Leong Bank',
+      account_number: extractField([/Account Number[:\s]*([0-9]+)/i]),
+      account_name: extractField([/Account Name[:\s]*(.+?)(?:\n|$)/i]) || 'FLOW SOLUTION SDN BH',
+      beneficiary_name: beneficiaryName,
+      beneficiary_bank: extractField([/Beneficiary Bank.*?Name[:\s]*(.+?)(?:\n|$)/i]),
+      beneficiary_country: 'HONG KONG',
+      payment_details: paymentDetails,
+      bank_charges: extractAmount([/Charges[:\s]*([0-9.,]+)/i]) || 50.00,
+      status: extractField([/Status[:\s]*(.+?)(?:\n|$)/i]) || 'Completed'
+    },
+    confidence: 0.75,
+    document_type: 'bank_payment_slip'
+  };
+}
+
+
+
 // ================================
 // OTHER EXTRACTION METHODS (UNCHANGED)
 // ================================
