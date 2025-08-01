@@ -606,6 +606,9 @@ async function extractWithAI(text, aiProvider = 'deepseek') {
     2. UOM values (PCS, UNI, SET, etc.) are NEVER the product name
     3. Look for multi-line product descriptions after each line number
     4. In this format: Line -> Part Number -> Product Description (on next line) -> Quantity -> UOM -> Price
+    5. Look for project codes near each line item (format: FS-S3798, BWS-S1046, etc.)
+    6. Project codes may appear in blue text, separate columns, or as references
+    7. Extract project code for each item if visible - it's essential for project tracking
     
     Example:
     Line  Part Number
@@ -616,7 +619,22 @@ async function extractWithAI(text, aiProvider = 'deepseek') {
     responseStructure = `
     {
       "${documentType === 'proforma_invoice' ? 'proforma_invoice' : 'purchase_order'}": {
-        // Standard structure based on document type
+        "poNumber": "string",
+        "dateIssued": "string",
+        "supplier": { "name": "string", "address": "string" },
+        "items": [
+          {
+            "lineNumber": number,
+            "productCode": "string",
+            "productName": "string",
+            "quantity": number,
+            "unit": "string",
+            "unitPrice": number,
+            "totalPrice": number,
+            "projectCode": "string (e.g., FS-S3798, BWS-S1046)"
+          }
+        ],
+        "totalAmount": number
       }
     }`;
   }
