@@ -1128,6 +1128,103 @@ function extractBankPaymentFallback(text) {
   };
 }
 
+/**
+ * Enhanced project code extraction for PO documents
+ */
+function enhanceProjectCodes(extractedData, fullText) {
+  console.log('🏢 Enhancing project codes extraction...');
+  
+  if (!extractedData.items) return extractedData;
+  
+  const projectCodePatterns = [
+    /FS-S\d+/gi,        // PTP format: FS-S3798, FS-S3845
+    /BWS-S\d+/gi,       // BWS format: BWS-S1046
+    /[A-Z]{2,3}-[A-Z]\d+/gi, // Generic format: XX-X1234
+    /Project\s*Code[:\s]+([A-Z0-9-]+)/gi,
+    /Job\s*No[:\s]+([A-Z0-9-]+)/gi,
+    /Ref[:\s]+([A-Z0-9-]+)/gi
+  ];
+  
+  // Split full text into lines for better context matching
+  const textLines = fullText.split('\n');
+  
+  extractedData.items = extractedData.items.map((item, index) => {
+    let projectCode = item.projectCode || '';
+    
+    if (!projectCode) {
+      // Strategy 1: Search in item's own text
+      const itemText = [
+        item.description,
+        item.productName,
+        item.notes,
+        item.partNumber,
+        item.part_number,
+        item.productCode
+      ].filter(Boolean).join(' ');
+      
+      for (const pattern of projectCodePatterns) {
+        const match = itemText.match(pattern);
+        if (match) {
+          projectCode = match[0];
+          console.log(`✅ Found project code in item text: ${projectCode} for item ${index + 1}`);
+          break;
+        }
+      }
+      
+      // Strategy 2: Search in nearby text lines if still not found
+      if (!projectCode && item.description) {
+        for (let i = 0; i < textLines.length; i++) {
+          const line = textLines[i];
+          
+          // If this line contains the item description or part number
+          const searchTerms = [
+            item.description?.substring(0, 20),
+            item.partNumber,
+            item.part_number,
+            item.productCode
+          ].filter(Boolean);
+          
+          const lineContainsItem = searchTerms.some(term => 
+            line.includes(term) && term.length > 3
+          );
+          
+          if (lineContainsItem) {
+            // Check current line and next few lines for project codes
+            for (let j = i; j < Math.min(i + 3, textLines.length); j++) {
+              const searchLine = textLines[j];
+              
+              for (const pattern of projectCodePatterns) {
+                const match = searchLine.match(pattern);
+                if (match) {
+                  projectCode = match[0];
+                  console.log(`✅ Found project code in nearby line: ${projectCode} for item ${index + 1}`);
+                  break;
+                }
+              }
+              if (projectCode) break;
+            }
+          }
+          if (projectCode) break;
+        }
+      }
+    }
+    
+    console.log(`Item ${index + 1}: ${item.description?.substring(0, 30)}... → Project Code: ${projectCode || 'NOT FOUND'}`);
+    
+    return {
+      ...item,
+      projectCode: projectCode.trim(),
+      // Ensure consistent field names for frontend
+      productName: item.description || item.productName || '',
+      productCode: item.partNumber || item.part_number || item.productCode || ''
+    };
+  });
+  
+  const foundCodes = extractedData.items.filter(item => item.projectCode).length;
+  console.log(`🏢 Project code extraction complete: ${foundCodes}/${extractedData.items.length} items have project codes`);
+  
+  return extractedData;
+}
 
 
 // ================================
