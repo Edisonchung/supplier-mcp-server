@@ -764,7 +764,7 @@ exports.extractFromPDF = async (req, res) => {
     console.log(`Using AI provider: ${aiProvider}`);
     const aiStartTime = Date.now();
 
-    // Extract structured data using AI
+ // Extract structured data using AI
     const structuredData = await extractWithAI(extractedText, aiProvider).catch(error => {
       console.error('AI extraction failed:', error);
       throw new Error('AI extraction failed. Please try again or contact support.');
@@ -772,6 +772,20 @@ exports.extractFromPDF = async (req, res) => {
     
     const aiTime = Date.now() - aiStartTime;
     console.log(`AI extraction completed in ${aiTime}ms`);
+
+    // ✅ ADD PROJECT CODE ENHANCEMENT HERE
+    console.log('🏢 Starting project code enhancement...');
+    let enhancedStructuredData = structuredData;
+    
+    // Apply project code enhancement to purchase orders
+    if (structuredData.purchase_order) {
+      enhancedStructuredData.purchase_order = enhanceProjectCodes(structuredData.purchase_order, extractedText);
+    } else if (structuredData.proforma_invoice) {
+      enhancedStructuredData.proforma_invoice = enhanceProjectCodes(structuredData.proforma_invoice, extractedText);
+    } else if (structuredData.items) {
+      // Handle legacy format
+      enhancedStructuredData = enhanceProjectCodes(structuredData, extractedText);
+    }
 
     // Detect document type for response formatting
     const documentType = detectDocumentType(extractedText);
