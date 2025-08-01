@@ -9,15 +9,36 @@ async function extractFromPDF(filePath) {
   
   try {
     const data = await pdfParse(dataBuffer);
+
+     // ✅ ENHANCED: Preserve line structure for better project code detection
+    const lines = data.text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    
     return {
       text: data.text,
+      lines: lines,
       info: data.info,
-      pages: data.numpages
+      pages: data.numpages,
+      projectCodesPreview: extractProjectCodesPreview(data.text)
     };
   } catch (error) {
     console.log('Text extraction failed, document might need OCR');
     throw error;
   }
+}
+
+// ✅ ADD THIS HELPER FUNCTION
+function extractProjectCodesPreview(text) {
+  const patterns = [/FS-S\d+/gi, /BWS-S\d+/gi, /[A-Z]{2,3}-[A-Z]\d+/gi];
+  const found = [];
+  
+  for (const pattern of patterns) {
+    const matches = text.match(pattern);
+    if (matches) {
+      found.push(...matches);
+    }
+  }
+  
+  return [...new Set(found)]; // Remove duplicates
 }
 
 // Extract from Excel
