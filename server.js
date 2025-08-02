@@ -30,40 +30,115 @@ app.use(cors({
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Add middleware to set AI-related headers
+app.use((req, res, next) => {
+  res.setHeader('X-HiggsFlow-AI-Version', '2.0.0');
+  res.setHeader('X-Modular-AI-Enabled', 'true');
+  next();
+});
+
 // Routes
 const apiRoutes = require('./routes/api.routes');
 app.use('/api', apiRoutes);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    timeouts: {
-      request: '5 minutes',
-      response: '5 minutes',
-      maxFileSize: '10MB'
-    },
-    environment: process.env.NODE_ENV || 'development',
-    endpoints: {
-      health: '/health',
-      api: '/api',
-      extraction: '/api/purchase-orders/extract',
-      bankPayment: '/api/bank-payments/extract' // NEW: Bank payment endpoint
-    }
-  });
+// NEW: Add AI routes
+const aiRoutes = require('./routes/ai.routes');
+app.use('/api/ai', aiRoutes);
+
+// Enhanced health check endpoint with AI system status
+app.get('/health', async (req, res) => {
+  try {
+    // Get AI system health
+    const UnifiedAIService = require('./services/ai/UnifiedAIService');
+    const aiService = new UnifiedAIService();
+    const aiHealth = await aiService.healthCheck();
+    const providerStatus = await aiService.getProviderStatus();
+    
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      services: {
+        core: 'active',
+        modularAI: aiHealth.status, // New modular AI status
+        ai: 'active'
+      },
+      ai: {
+        modules: aiHealth.modules,
+        prompts: aiHealth.prompts,
+        providers: aiHealth.providers,
+        version: aiHealth.version,
+        provider_status: Object.keys(providerStatus).length
+      },
+      timeouts: {
+        request: '5 minutes',
+        response: '5 minutes',
+        maxFileSize: '10MB'
+      },
+      environment: process.env.NODE_ENV || 'development',
+      version: '2.0.0-modular-ai',
+      endpoints: {
+        health: '/health',
+        api: '/api',
+        ai: '/api/ai', // New AI management endpoints
+        aiDocs: '/api/ai/docs', // AI API documentation
+        extraction: '/api/purchase-orders/extract',
+        bankPayment: '/api/bank-payments/extract',
+        enhancedExtraction: '/api/ai/extract/purchase-order', // Enhanced extraction
+        enhancedPIExtraction: '/api/ai/extract/proforma-invoice' // Enhanced PI extraction
+      },
+      features: {
+        modularAI: true, // New feature flag
+        multiProviderAI: true,
+        supplierSpecificIntelligence: true,
+        enhancedExtraction: true,
+        performanceTracking: true,
+        backwardCompatible: true
+      }
+    });
+  } catch (error) {
+    console.warn('AI system not fully initialized:', error.message);
+    res.json({
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      services: {
+        core: 'active',
+        modularAI: 'initializing',
+        ai: 'active'
+      },
+      timeouts: {
+        request: '5 minutes',
+        response: '5 minutes',
+        maxFileSize: '10MB'
+      },
+      environment: process.env.NODE_ENV || 'development',
+      version: '2.0.0-modular-ai',
+      ai_status: 'initializing',
+      error: error.message
+    });
+  }
 });
 
-// Root endpoint
+// Enhanced root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'Supplier MCP Server is running',
-    version: '1.0.0',
+    message: 'HiggsFlow Supplier MCP Server with Modular AI',
+    version: '2.0.0-modular-ai',
+    features: [
+      'Enhanced document extraction',
+      'Multi-provider AI support',
+      'Supplier-specific intelligence',
+      'Performance tracking',
+      'Modular architecture'
+    ],
     endpoints: {
       health: '/health',
       api: '/api',
+      ai: '/api/ai',
       extraction: '/api/purchase-orders/extract',
-      bankPaymentExtraction: '/api/bank-payments/extract' // NEW: Bank payment endpoint
+      bankPaymentExtraction: '/api/bank-payments/extract',
+      enhancedPOExtraction: '/api/ai/extract/purchase-order',
+      enhancedPIExtraction: '/api/ai/extract/proforma-invoice',
+      aiDocumentation: '/api/ai/docs'
     }
   });
 });
@@ -88,6 +163,15 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // AI-specific errors
+  if (err.message && err.message.includes('AI')) {
+    return res.status(500).json({
+      success: false,
+      message: 'AI service error: ' + err.message,
+      context: 'ai_service'
+    });
+  }
+  
   res.status(500).json({
     success: false,
     message: err.message || 'Internal server error'
@@ -102,13 +186,61 @@ app.use((req, res) => {
   });
 });
 
-// Start server
+// Start server with enhanced logging
 const server = app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 is running on port ${PORT}`);
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`); // NEW: Log bank payment endpoint
+  console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`);
+  
+  // Log new AI endpoints
+  console.log('\n🤖 Modular AI endpoints registered:');
+  console.log(`   🏥 GET  http://localhost:${PORT}/api/ai/health - AI system health`);
+  console.log(`   🧪 GET  http://localhost:${PORT}/api/ai/test - Quick functionality test`);
+  console.log(`   📦 GET  http://localhost:${PORT}/api/ai/modules - Module management`);
+  console.log(`   📝 GET  http://localhost:${PORT}/api/ai/prompts - Prompt management`);
+  console.log(`   📄 POST http://localhost:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
+  console.log(`   📋 POST http://localhost:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
+  console.log(`   📚 GET  http://localhost:${PORT}/api/ai/docs - API documentation`);
+  console.log(`   🔄 POST http://localhost:${PORT}/api/ai/extract-po - Legacy compatibility`);
+  console.log(`   🔄 POST http://localhost:${PORT}/api/ai/extract-pi - Legacy compatibility`);
+  
+  // Environment variables check
+  const requiredEnvVars = ['DEEPSEEK_API_KEY'];
+  const optionalEnvVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_AI_API_KEY'];
+  const missingRequired = requiredEnvVars.filter(envVar => !process.env[envVar]);
+  const missingOptional = optionalEnvVars.filter(envVar => !process.env[envVar]);
+
+  if (missingRequired.length > 0) {
+    console.log('\n⚠️  Missing REQUIRED environment variables:');
+    missingRequired.forEach(envVar => {
+      console.log(`   - ${envVar} (Required for AI functionality)`);
+    });
+  } else {
+    console.log('\n✅ All required AI environment variables configured');
+  }
+  
+  if (missingOptional.length > 0) {
+    console.log('\n💡 Optional AI providers not configured:');
+    missingOptional.forEach(envVar => {
+      console.log(`   - ${envVar} (For enhanced AI capabilities)`);
+    });
+  } else {
+    console.log('✅ All AI providers configured for maximum capabilities');
+  }
+  
+  console.log('\n🎯 Features enabled:');
+  console.log('   ✅ Modular AI architecture');
+  console.log('   ✅ Multi-provider AI support');
+  console.log('   ✅ Supplier-specific intelligence (PTP optimization)');
+  console.log('   ✅ Enhanced document extraction');
+  console.log('   ✅ Performance tracking and analytics');
+  console.log('   ✅ Backward compatibility with existing APIs');
+  
+  console.log('\n🚀 Ready for Phase 1 testing!');
+  console.log(`   Run: node scripts/ai/test-modular-ai.js`);
+  console.log(`   Or visit: http://localhost:${PORT}/api/ai/docs`);
 });
 
 // Graceful shutdown
