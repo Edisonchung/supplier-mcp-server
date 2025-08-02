@@ -2,6 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const upload = require('../config/multer');
+const multer = require('multer');
+
 
 // Controllers
 const extractionController = require('../controllers/extraction.controller');
@@ -40,6 +42,23 @@ router.post('/extract-po', upload.single('pdf'), extractionController.extractFro
 router.post('/extract-image', upload.single('image'), extractionController.extractFromImage);
 router.post('/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
 router.post('/extract-email', upload.single('email'), extractionController.extractFromEmail);
+
+
+// Get current prompt system status for a user
+router.get('/prompt-system-status', extractionController.getPromptSystemStatus);
+
+// Set user's prompt system preference  
+router.post('/set-prompt-system-preference', extractionController.setPromptSystemPreference);
+
+// Get prompt system analytics and performance data
+router.get('/prompt-system-analytics', extractionController.getPromptSystemAnalytics);
+
+// Test extraction with specific system (single file)
+router.post('/test-extraction', upload.single('pdf'), extractionController.testExtraction);
+
+// Batch comparison test (multiple files)
+router.post('/batch-comparison-test', upload.array('files', 10), extractionController.batchComparisonTest);
+
 
 // Duplicate and recommendations
 router.post('/check-duplicate', duplicateController.checkDuplicate);
