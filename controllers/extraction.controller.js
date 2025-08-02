@@ -265,12 +265,9 @@ RETURN STRUCTURED JSON:
 };
 
 // ================================
-// ENHANCED PI EXTRACTION FUNCTIONS (UNCHANGED)
+// DOCUMENT TYPE DETECTION
 // ================================
 
-/**
- * Detect document type from content
- */
 function detectDocumentType(text) {
   const upperText = text.toUpperCase();
   
@@ -312,412 +309,16 @@ function detectDocumentType(text) {
   }
 }
 
-/**
- * Enhanced Proforma Invoice extraction specifically for Chinese suppliers
- */
-function extractProformaInvoiceItems(text) {
-  console.log('=== ENHANCED PI TABLE EXTRACTION ===');
-  
-  const items = [];
-  const lines = text.split('\n').map(line => line.trim()).filter(line => line);
-  
-  let inItemsSection = false;
-  let headerRowIndex = -1;
-  
-  // Find the items table section
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].toLowerCase();
-    
-    // Detect start of items table - Chinese supplier format
-    if ((line.includes('sr no') || line.includes('sr.no')) && 
-        line.includes('items name') && 
-        (line.includes('model') || line.includes('brand'))) {
-      inItemsSection = true;
-      headerRowIndex = i;
-      console.log(`Found PI table header at line ${i}: ${lines[i]}`);
-      continue;
-    }
-    
-    // Alternative header detection
-    if (line.includes('quantity') && line.includes('unit price') && line.includes('total price')) {
-      inItemsSection = true;
-      headerRowIndex = i;
-      console.log(`Found alternative PI table header at line ${i}: ${lines[i]}`);
-      continue;
-    }
-    
-    // Detect end of items table
-    if (inItemsSection && (
-        line.includes('total') && (line.includes('$') || line.includes('usd')) ||
-        line.includes('freight') ||
-        line.includes('terms and conditions') ||
-        line.includes('payment terms')
-      )) {
-      console.log(`End of PI table at line ${i}: ${lines[i]}`);
-      break;
-    }
-    
-    // Extract item rows
-    if (inItemsSection && headerRowIndex > -1) {
-      // Look for lines that start with a number (Sr NO)
-      const itemNumberMatch = line.match(/^(\d+)\s+(.+)/);
-      
-      if (itemNumberMatch) {
-        const srNo = parseInt(itemNumberMatch[1]);
-        const remainingText = itemNumberMatch[2];
-        
-        console.log(`Processing PI item ${srNo}: ${remainingText}`);
-        
-        const item = parsePIItemRow(srNo, remainingText, lines, i);
-        
-        if (item) {
-          items.push(item);
-          console.log(`Extracted PI item:`, item);
-        }
-      }
-    }
-  }
-  
-  console.log(`Total PI items extracted: ${items.length}`);
-  return items;
-}
+// ================================
+// AI EXTRACTION WITH DUAL SYSTEM
+// ================================
 
-/**
- * Parse a single PI item row with enhanced pattern matching for Chinese suppliers
- */
-function parsePIItemRow(srNo, rowText, allLines, currentIndex) {
-  try {
-    // Handle multi-line item descriptions
-    let fullItemText = rowText;
-    
-    // Check if next line might be continuation (no leading number)
-    if (currentIndex + 1 < allLines.length) {
-      const nextLine = allLines[currentIndex + 1].trim();
-      if (nextLine && !nextLine.match(/^\d+\s+/) && !nextLine.toLowerCase().includes('total')) {
-        fullItemText += ' ' + nextLine;
-        console.log(`Combined with next line: ${fullItemText}`);
-      }
-    }
-    
-    // Enhanced regex patterns for Chinese supplier PI formats
-    const patterns = [
-      // Pattern 1: BEARING 32222 SKF 100 $ 13.00 7.43KG $ 1,300.00 743KG
-      /^(\w+)\s+([A-Z0-9\/-]+)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG/i,
-      
-      // Pattern 2: BEARING HM518445/10 SKF 100 $ 6.00 2.88KG $ 600.00 288KG
-      /^(\w+)\s+([A-Z0-9\/-]+)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG/i,
-      
-      // Pattern 3: BEARING 6309-2Z SKF 10 $ 4.63 0.88KG $ 46.31 8.8KG
-      /^(\w+)\s+([A-Z0-9\/-Z]+)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG\s+\$\s*([\d,]+\.?\d*)\s+([\d.]+)KG/i,
-      
-      // Pattern 4: For items without clear separators
-      /(\w+)\s+([A-Z0-9\/-Z]+)\s+([A-Z]+).*?(\d+).*?\$\s*([\d,]+\.?\d*).*?\$\s*([\d,]+\.?\d*)/i,
-      
-      // Pattern 5: More flexible pattern for complex models
-      /^(\w+)\s+([A-Z0-9\/-]+(?:\s[A-Z0-9\/-]+)*)\s+([A-Z]+)\s+(\d+)\s+\$\s*([\d,]+\.?\d*).*?\$\s*([\d,]+\.?\d*)/i
-    ];
-    
-    for (const pattern of patterns) {
-      const match = fullItemText.match(pattern);
-      
-      if (match) {
-        const [, itemType, model, brand, quantity, unitPriceStr, , totalPriceStr] = match;
-        
-        // Clean and parse numbers
-        const qty = parseInt(quantity) || 0;
-        const unitPrice = parseFloat(unitPriceStr.replace(/,/g, '')) || 0;
-        const totalPrice = parseFloat(totalPriceStr.replace(/,/g, '')) || 0;
-        
-        const item = {
-          lineNumber: srNo,
-          productCode: model.trim(),
-          productName: `${itemType} ${model}`.trim(),
-          brand: brand.trim(),
-          quantity: qty,
-          unit: 'PCS',
-          unitPrice: unitPrice,
-          totalPrice: totalPrice,
-          
-          // Additional fields for PI
-          category: itemType.toLowerCase(),
-          specifications: fullItemText // Keep original for reference
-        };
-        
-        console.log(`Successfully parsed PI item ${srNo}:`, item);
-        return item;
-      }
-    }
-    
-    // Fallback: extract what we can
-    console.log(`Using fallback parsing for PI item ${srNo}: ${fullItemText}`);
-    
-    // Extract numbers and basic info
-    const numbers = fullItemText.match(/[\d,]+\.?\d*/g) || [];
-    const words = fullItemText.split(/\s+/).filter(w => w.length > 0);
-    
-    return {
-      lineNumber: srNo,
-      productCode: extractProductCode(words),
-      productName: extractProductName(words),
-      brand: extractBrand(words),
-      quantity: numbers.length > 0 ? parseInt(numbers[0].replace(/,/g, '')) : 1,
-      unit: 'PCS',
-      unitPrice: numbers.length > 1 ? parseFloat(numbers[1].replace(/,/g, '')) : 0,
-      totalPrice: numbers.length > 2 ? parseFloat(numbers[2].replace(/,/g, '')) : 0,
-      specifications: fullItemText
-    };
-    
-  } catch (error) {
-    console.error(`Error parsing PI item ${srNo}:`, error);
-    return null;
-  }
-}
-
-/**
- * Helper functions for fallback parsing
- */
-function extractProductCode(words) {
-  // Look for alphanumeric codes (like 32222, HM518445/10, 6309-2Z)
-  for (const word of words) {
-    if (/^[A-Z0-9\/-]+$/i.test(word) && word.length > 2) {
-      return word;
-    }
-  }
-  return words[1] || '';
-}
-
-function extractProductName(words) {
-  // Usually starts with the item type (BEARING, etc.)
-  const itemType = words.find(w => /^[A-Z]+$/i.test(w) && w.length > 3);
-  const productCode = extractProductCode(words);
-  
-  if (itemType && productCode) {
-    return `${itemType} ${productCode}`;
-  }
-  
-  return words.slice(0, 3).join(' ');
-}
-
-function extractBrand(words) {
-  // Common bearing brands
-  const knownBrands = ['SKF', 'FAG', 'NSK', 'TIMKEN', 'NTN', 'KOYO', 'MCGILL'];
-  
-  for (const word of words) {
-    if (knownBrands.includes(word.toUpperCase())) {
-      return word.toUpperCase();
-    }
-  }
-  
-  return '';
-}
-
-/**
- * Extract PI-specific information
- */
-function extractPIInfo(text) {
-  console.log('Extracting PI-specific information...');
-  
-  const piData = {
-    documentType: 'proforma_invoice'
-  };
-  
-  // Extract PI/Quote number
-  const piNumberPatterns = [
-    /QUOTE NO\.?:\s*([A-Z0-9-]+)/i,
-    /PI NO\.?:\s*([A-Z0-9-]+)/i,
-    /INVOICE NO\.?:\s*([A-Z0-9-]+)/i,
-    /PROFORMA NO\.?:\s*([A-Z0-9-]+)/i
-  ];
-  
-  for (const pattern of piNumberPatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      piData.piNumber = match[1];
-      break;
-    }
-  }
-  
-  // Extract date
-  const dateMatch = text.match(/DATE:\s*(\d{4})[.\-\/](\d{2})[.\-\/](\d{2})/);
-  if (dateMatch) {
-    piData.date = `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`;
-  }
-  
-  // Extract supplier info
-  piData.supplier = extractSupplierInfo(text);
-  
-  // Extract buyer info
-  piData.buyer = extractBuyerInfo(text);
-  
-  // Extract items using enhanced method
-  piData.items = extractProformaInvoiceItems(text);
-  
-  // Extract totals
-  piData.totals = extractPITotals(text);
-  
-  // Extract terms
-  piData.terms = extractPITerms(text);
-  
-  console.log(`PI extraction complete. Found ${piData.items.length} items.`);
-  return piData;
-}
-
-function extractSupplierInfo(text) {
-  const lines = text.split('\n');
-  let inShipperSection = false;
-  const supplier = {};
-  
-  for (const line of lines) {
-    if (line.includes('SHIPPER') || line.includes('SELLER')) {
-      inShipperSection = true;
-      continue;
-    }
-    
-    if (line.includes('RECEIVER') || line.includes('BUYER')) {
-      inShipperSection = false;
-      continue;
-    }
-    
-    if (inShipperSection) {
-      if (line.includes('Company Name:')) {
-        supplier.name = line.replace(/Company Name:\s*/, '').trim();
-      } else if (line.includes('Contact Person:')) {
-        supplier.contact = line.replace(/Contact Person:\s*/, '').trim();
-      } else if (line.includes('E-MAIL:') || line.includes('Email:')) {
-        supplier.email = line.replace(/E-MAIL:\s*/, '').replace(/Email:\s*/, '').trim();
-      } else if (line.includes('Phone:')) {
-        supplier.phone = line.replace(/Phone:\s*/, '').trim();
-      } else if (line.includes('Address:')) {
-        supplier.address = line.replace(/Address:\s*/, '').trim();
-      }
-    }
-  }
-  
-  return supplier;
-}
-
-function extractBuyerInfo(text) {
-  const lines = text.split('\n');
-  let inReceiverSection = false;
-  const buyer = {};
-  
-  for (const line of lines) {
-    if (line.includes('RECEIVER') || line.includes('BUYER')) {
-      inReceiverSection = true;
-      continue;
-    }
-    
-    if (line.includes('TERMS AND CONDITIONS') || line.includes('Sr NO')) {
-      inReceiverSection = false;
-      continue;
-    }
-    
-    if (inReceiverSection) {
-      if (line.includes('Company Name:')) {
-        buyer.name = line.replace(/Company Name:\s*/, '').trim();
-      } else if (line.includes('Contact Person:')) {
-        buyer.contact = line.replace(/Contact Person:\s*/, '').trim();
-      } else if (line.includes('Email:')) {
-        buyer.email = line.replace(/Email:\s*/, '').trim();
-      } else if (line.includes('PH:')) {
-        buyer.phone = line.replace(/PH:\s*/, '').trim();
-      } else if (line.includes('Address:')) {
-        buyer.address = line.replace(/Address:\s*/, '').trim();
-      }
-    }
-  }
-  
-  return buyer;
-}
-
-function extractPITotals(text) {
-  const subtotalMatch = text.match(/TOTAL\s+\$\s*([\d,]+\.?\d*)/i);
-  const freightMatch = text.match(/FREIGHT\s+\$\s*([\d,]+\.?\d*)/i);
-  const totalCostMatch = text.match(/TOTAL COST\s+\$\s*([\d,]+\.?\d*)/i);
-  
-  return {
-    subtotal: subtotalMatch ? parseFloat(subtotalMatch[1].replace(/,/g, '')) : 0,
-    freight: freightMatch ? parseFloat(freightMatch[1].replace(/,/g, '')) : 0,
-    totalCost: totalCostMatch ? parseFloat(totalCostMatch[1].replace(/,/g, '')) : 0,
-    currency: 'USD'
-  };
-}
-
-function extractPITerms(text) {
-  const paymentMatch = text.match(/Terms of payment[：:]\s*([^;\n]+)/i);
-  const deliveryMatch = text.match(/Delivery time[：:]\s*([^;\n]+)/i);
-  const brandMatch = text.match(/Brand[：:]\s*([^;\n]+)/i);
-  const packagingMatch = text.match(/Packaging[：:]\s*([^;\n]+)/i);
-  
-  return {
-    payment: paymentMatch ? paymentMatch[1].trim() : '',
-    delivery: deliveryMatch ? deliveryMatch[1].trim() : '',
-    brand: brandMatch ? brandMatch[1].trim() : '',
-    packaging: packagingMatch ? packagingMatch[1].trim() : ''
-  };
-}
-
-// Apply PTP-specific post-processing rules
-const applyPTPRules = (extractedData, originalText) => {
-  if (extractedData.items) {
-    extractedData.items = extractedData.items.map(item => {
-      // Fix common PTP extraction errors
-      if (['PCS', 'UNI', 'SET', 'EA', 'UNIT'].includes(item.productName)) {
-        console.log(`Fixing PTP extraction: "${item.productName}" is not a valid product name`);
-        
-        // Try to find the real product name
-        const lines = originalText.split('\n');
-        const codeLineIndex = lines.findIndex(line => 
-          item.productCode && line.includes(item.productCode)
-        );
-        
-        if (codeLineIndex !== -1 && codeLineIndex < lines.length - 1) {
-          const nextLine = lines[codeLineIndex + 1].trim();
-          if (nextLine && 
-              !['PCS', 'UNI', 'SET', 'EA'].includes(nextLine) && 
-              !/^\d+\.?\d*$/.test(nextLine) && // Not just numbers
-              nextLine.length > 2) {
-            item.productName = nextLine;
-            console.log(`Fixed product name to: "${nextLine}"`);
-          }
-        }
-      }
-      
-      return item;
-    });
-  }
-  
-  // Ensure supplier name is correct for PTP
-  if (extractedData.supplier) {
-    extractedData.supplier.name = 'PT. PERINTIS TEKNOLOGI PERDANA';
-  }
-  
-  return extractedData;
-};
-
-// Enhanced AI extraction with document type detection and dual system support
 async function extractWithAI(text, aiProvider = 'deepseek', selectedPrompt = null) {
   console.log(`🤖 Starting AI extraction with ${aiProvider}, text length: ${text.length} characters`);
   
   // Detect document type if not specified in prompt
   const documentType = detectDocumentType(text);
   console.log(`📄 Detected document type: ${documentType}`);
-  
-  // If it's a PI and we're using legacy system, use enhanced PI extraction first
-  if (documentType === 'proforma_invoice' && (!selectedPrompt || selectedPrompt.system === 'legacy')) {
-    console.log('📊 Using enhanced PI extraction method...');
-    try {
-      const piData = extractPIInfo(text);
-      if (piData.items && piData.items.length > 0) {
-        console.log(`✅ Enhanced PI extraction successful: ${piData.items.length} items found`);
-        return {
-          proforma_invoice: piData
-        };
-      }
-    } catch (error) {
-      console.log('⚠️ Enhanced PI extraction failed, falling back to AI:', error.message);
-    }
-  }
   
   // Use selected prompt or determine appropriate prompt
   let prompt, responseStructure;
@@ -875,15 +476,6 @@ async function extractWithAI(text, aiProvider = 'deepseek', selectedPrompt = nul
       )
     ]);
     
-    // Apply PTP-specific post-processing if needed
-    const supplierInfo = identifySupplier(text);
-    if (supplierInfo.supplier === 'PTP') {
-      console.log('🔧 Applying PTP-specific rules...');
-      if (result.purchase_order) {
-        result.purchase_order = applyPTPRules(result.purchase_order, text);
-      }
-    }
-    
     console.log('✅ AI extraction completed successfully');
     return result;
   } catch (error) {
@@ -940,10 +532,108 @@ function getResponseStructureForDocumentType(documentType) {
 }
 
 // ================================
+// ENHANCED PROJECT CODE EXTRACTION
+// ================================
+
+function enhanceProjectCodes(extractedData, fullText) {
+  console.log('🏢 Enhancing project codes extraction...');
+  
+  if (!extractedData.items) return extractedData;
+  
+  const projectCodePatterns = [
+    /FS-S\d+/gi,        // PTP format: FS-S3798, FS-S3845
+    /BWS-S\d+/gi,       // BWS format: BWS-S1046
+    /[A-Z]{2,3}-[A-Z]\d+/gi, // Generic format: XX-X1234
+    /Project\s*Code[:\s]+([A-Z0-9-]+)/gi,
+    /Job\s*No[:\s]+([A-Z0-9-]+)/gi,
+    /Ref[:\s]+([A-Z0-9-]+)/gi
+  ];
+  
+  // Split full text into lines for better context matching
+  const textLines = fullText.split('\n');
+  
+  extractedData.items = extractedData.items.map((item, index) => {
+    let projectCode = item.projectCode || '';
+    
+    if (!projectCode) {
+      // Strategy 1: Search in item's own text
+      const itemText = [
+        item.description,
+        item.productName,
+        item.notes,
+        item.partNumber,
+        item.part_number,
+        item.productCode
+      ].filter(Boolean).join(' ');
+      
+      for (const pattern of projectCodePatterns) {
+        const match = itemText.match(pattern);
+        if (match) {
+          projectCode = match[0];
+          console.log(`✅ Found project code in item text: ${projectCode} for item ${index + 1}`);
+          break;
+        }
+      }
+      
+      // Strategy 2: Search in nearby text lines if still not found
+      if (!projectCode && item.description) {
+        for (let i = 0; i < textLines.length; i++) {
+          const line = textLines[i];
+          
+          // If this line contains the item description or part number
+          const searchTerms = [
+            item.description?.substring(0, 20),
+            item.partNumber,
+            item.part_number,
+            item.productCode
+          ].filter(Boolean);
+          
+          const lineContainsItem = searchTerms.some(term => 
+            line.includes(term) && term.length > 3
+          );
+          
+          if (lineContainsItem) {
+            // Check current line and next few lines for project codes
+            for (let j = i; j < Math.min(i + 3, textLines.length); j++) {
+              const searchLine = textLines[j];
+              
+              for (const pattern of projectCodePatterns) {
+                const match = searchLine.match(pattern);
+                if (match) {
+                  projectCode = match[0];
+                  console.log(`✅ Found project code in nearby line: ${projectCode} for item ${index + 1}`);
+                  break;
+                }
+              }
+              if (projectCode) break;
+            }
+          }
+          if (projectCode) break;
+        }
+      }
+    }
+    
+    console.log(`Item ${index + 1}: ${item.description?.substring(0, 30)}... → Project Code: ${projectCode || 'NOT FOUND'}`);
+    
+    return {
+      ...item,
+      projectCode: projectCode.trim(),
+      // Ensure consistent field names for frontend
+      productName: item.description || item.productName || '',
+      productCode: item.partNumber || item.part_number || item.productCode || ''
+    };
+  });
+  
+  const foundCodes = extractedData.items.filter(item => item.projectCode).length;
+  console.log(`🏢 Project code extraction complete: ${foundCodes}/${extractedData.items.length} items have project codes`);
+  
+  return extractedData;
+}
+
+// ================================
 // ENHANCED MAIN EXTRACTION ENDPOINT
 // ================================
 
-// Main extraction endpoint with dual system support
 exports.extractFromPDF = async (req, res) => {
   try {
     // Log request details
@@ -1155,16 +845,6 @@ exports.extractFromPDF = async (req, res) => {
       }
     });
 
-    // NEW: Track usage analytics (fire and forget)
-    if (PROMPT_SYSTEM_CONFIG.analytics.trackUsage) {
-      trackExtractionUsage(selectedPrompt, user, supplierInfo, {
-        success: true,
-        processingTime: totalTime,
-        aiProvider: aiProvider,
-        documentType: documentType
-      }).catch(error => console.warn('📊 Analytics tracking failed:', error.message));
-    }
-
   } catch (error) {
     console.error('❌ PDF extraction error:', error);
     res.status(500).json({
@@ -1175,99 +855,175 @@ exports.extractFromPDF = async (req, res) => {
   }
 };
 
-/**
- * Fallback pattern-based extraction for bank payment slips
- */
-function extractBankPaymentFallback(text) {
-  console.log('🔄 Using pattern-based fallback extraction');
+// ================================
+// NEW: DUAL SYSTEM API ENDPOINTS
+// ================================
 
-  const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-  
-  // Helper function to extract field values
-  const extractField = (patterns, defaultValue = null) => {
-    const patternArray = Array.isArray(patterns) ? patterns : [patterns];
+exports.getPromptSystemStatus = async (req, res) => {
+  try {
+    const user = req.user || { 
+      email: req.query.userEmail || 'anonymous',
+      role: req.query.userRole || 'user'
+    };
+    const supplierInfo = { name: req.query.supplier || 'TEST_SUPPLIER' };
     
-    for (const pattern of patternArray) {
-      for (const line of lines) {
-        const match = line.match(pattern);
-        if (match && match[1]) {
-          return match[1].trim();
-        }
+    const promptSystem = selectPromptSystem(user, supplierInfo, {});
+    const selectedPrompt = await getPromptForExtraction(
+      promptSystem, 
+      supplierInfo, 
+      'purchase_order', 
+      user,
+      'pdf'
+    );
+    
+    // Get system statistics
+    const legacyPrompts = 4; // Base + PTP + PI + Generic variants
+    const mcpPrompts = await mcpPromptService.getPromptCount();
+    
+    res.json({
+      success: true,
+      current_system: promptSystem,
+      selected_prompt: selectedPrompt.metadata,
+      system_stats: {
+        legacy_prompts: legacyPrompts,
+        mcp_prompts: mcpPrompts,
+        test_users: PROMPT_SYSTEM_CONFIG.testUsers.length,
+        test_percentage: PROMPT_SYSTEM_CONFIG.testPercentage
+      },
+      user_info: {
+        email: user.email,
+        role: user.role,
+        is_test_user: PROMPT_SYSTEM_CONFIG.testUsers.includes(user.email)
+      },
+      config: {
+        default_mode: PROMPT_SYSTEM_CONFIG.defaultMode,
+        ab_testing_enabled: PROMPT_SYSTEM_CONFIG.enableABTesting,
+        fallback_enabled: PROMPT_SYSTEM_CONFIG.fallbackToLegacy
       }
-    }
-    return defaultValue;
-  };
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
 
-  // Helper function to extract amounts
-  const extractAmount = (patterns) => {
-    const amountStr = extractField(patterns);
-    if (!amountStr) return null;
+exports.setPromptSystemPreference = async (req, res) => {
+  try {
+    const { userEmail, promptSystem, permanent = false } = req.body;
     
-    const cleanAmount = amountStr.replace(/[^\d.-]/g, '');
-    const amount = parseFloat(cleanAmount);
-    return isNaN(amount) ? null : amount;
-  };
+    // Validate input
+    if (!userEmail || !promptSystem) {
+      return res.status(400).json({
+        success: false,
+        error: 'userEmail and promptSystem are required'
+      });
+    }
+    
+    if (!['legacy', 'mcp', 'auto'].includes(promptSystem)) {
+      return res.status(400).json({
+        success: false,
+        error: 'promptSystem must be one of: legacy, mcp, auto'
+      });
+    }
+    
+    console.log(`🎛️ User preference set: ${userEmail} -> ${promptSystem} (permanent: ${permanent})`);
+    
+    res.json({
+      success: true,
+      message: `Prompt system preference set to ${promptSystem} for ${userEmail}`,
+      setting: {
+        userEmail,
+        promptSystem,
+        permanent,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
 
-  // Extract data using patterns
-  const referenceNumber = extractField([
-    /Reference Number[:\s]*([A-Z0-9]+)/i,
-    /([C][0-9]{12,})/i
-  ]);
+exports.getPromptSystemAnalytics = async (req, res) => {
+  try {
+    // Mock analytics for now - you can replace with real data later
+    const mockAnalytics = {
+      daily_extractions: {
+        legacy_system: { count: 45, avg_accuracy: 92, avg_speed: 2.3 },
+        mcp_system: { count: 12, avg_accuracy: 96, avg_speed: 2.1 }
+      },
+      user_distribution: {
+        legacy_users: 23,
+        mcp_users: 3,
+        ab_test_users: 2
+      },
+      performance_comparison: {
+        accuracy_improvement: '+4%',
+        speed_improvement: '+8%',
+        recommendation: 'Expand MCP system usage'
+      },
+      top_prompts: [
+        { id: 'legacy_base_extraction', name: 'Base Legacy Template', usage: 45, accuracy: 92 },
+        { id: 'legacy_ptp_specific', name: 'PTP Legacy Template', usage: 12, accuracy: 96 }
+      ]
+    };
+    
+    res.json({
+      success: true,
+      analytics: mockAnalytics,
+      timestamp: new Date().toISOString(),
+      period: 'last_7_days'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
 
-  const paymentDate = extractField([
-    /Payment Date[:\s]*(\d{1,2}\/\d{1,2}\/\d{4})/i,
-    /(\d{1,2}\/\d{1,2}\/\d{4})/i
-  ]);
+// ================================
+// TESTING ENDPOINTS
+// ================================
 
-  const paidAmount = extractAmount([
-    /Debit Amount[:\s]*([0-9.,]+).*?USD/i,
-    /([0-9.,]+).*?USD/i
-  ]);
+exports.testExtraction = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      message: 'Test extraction endpoint - implementation coming soon',
+      data: null
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
 
-  const debitAmount = extractAmount([
-    /Payment Amount[:\s]*([0-9.,]+).*?MYR/i,
-    /([0-9.,]+).*?MYR/i
-  ]);
+exports.batchComparisonTest = async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      message: 'Batch comparison test endpoint - implementation coming soon',
+      data: null
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
 
-  const exchangeRate = extractAmount([
-    /Exchange Rate[:\s]*([0-9.,]+)/i
-  ]);
+// ================================
+// EXISTING ENDPOINTS (UNCHANGED)
+// ================================
 
-  const beneficiaryName = extractField([
-    /Beneficiary Name[:\s]*(.+?)(?:\n|$)/i,
-    /Beneficiary[:\s]*(.+?)(?:\n|$)/i
-  ]);
-
-  const paymentDetails = extractField([
-    /Payment Details[:\s]*(.+?)(?:\n|$)/i,
-    /Details[:\s]*(.+?)(?:\n|$)/i
-  ]);
-
-  return {
-    bank_payment: {
-      reference_number: referenceNumber,
-      payment_date: paymentDate,
-      payment_amount: paidAmount,
-      paid_currency: 'USD',
-      debit_amount: debitAmount,
-      debit_currency: 'MYR',
-      exchange_rate: exchangeRate,
-      bank_name: 'Hong Leong Bank',
-      account_number: extractField([/Account Number[:\s]*([0-9]+)/i]),
-      account_name: extractField([/Account Name[:\s]*(.+?)(?:\n|$)/i]) || 'FLOW SOLUTION SDN BH',
-      beneficiary_name: beneficiaryName,
-      beneficiary_bank: extractField([/Beneficiary Bank.*?Name[:\s]*(.+?)(?:\n|$)/i]),
-      beneficiary_country: 'HONG KONG',
-      payment_details: paymentDetails,
-      bank_charges: extractAmount([/Charges[:\s]*([0-9.,]+)/i]) || 50.00,
-      status: extractField([/Status[:\s]*(.+?)(?:\n|$)/i]) || 'Completed'
-    },
-    confidence: 0.75,
-    document_type: 'bank_payment_slip'
-  };
-}
-
-// Extract from image files (OCR)
 exports.extractFromImage = async (req, res) => {
   try {
     if (!req.file) {
@@ -1277,8 +1033,6 @@ exports.extractFromImage = async (req, res) => {
       });
     }
 
-    // For now, return a message that OCR is coming soon
-    // You can implement Tesseract.js here later
     res.json({
       success: false,
       message: 'OCR functionality coming soon. Please upload a PDF instead.',
@@ -1294,7 +1048,6 @@ exports.extractFromImage = async (req, res) => {
   }
 };
 
-// Extract from Excel files
 exports.extractFromExcel = async (req, res) => {
   try {
     if (!req.file) {
@@ -1332,9 +1085,7 @@ exports.extractFromExcel = async (req, res) => {
   }
 };
 
-// Process Excel data into standard format
 function processExcelData(rows) {
-  // This is a basic implementation - customize based on your Excel format
   const items = rows.map(row => ({
     productName: row['Product'] || row['Item'] || row['Description'] || '',
     quantity: parseInt(row['Quantity'] || row['Qty'] || 1),
@@ -1357,7 +1108,6 @@ function processExcelData(rows) {
   };
 }
 
-// Extract from email files (.eml, .msg)
 exports.extractFromEmail = async (req, res) => {
   try {
     if (!req.file) {
@@ -1367,7 +1117,6 @@ exports.extractFromEmail = async (req, res) => {
       });
     }
 
-    // For now, return a message that email extraction is coming soon
     res.json({
       success: false,
       message: 'Email extraction functionality coming soon. Please upload a PDF, Excel, or image file instead.',
@@ -1383,634 +1132,6 @@ exports.extractFromEmail = async (req, res) => {
   }
 };
 
-// Generate smart recommendations based on extracted data
-function generateRecommendations(data) {
-  const recommendations = [];
-  
-  // Check for missing critical fields
-  if (!data.piNumber && !data.poNumber && !data.orderNumber) {
-    recommendations.push({
-      field: 'documentNumber',
-      message: 'Document number not found. Please verify.',
-      severity: 'high'
-    });
-  }
-  
-  if (!data.deliveryDate && !data.date) {
-    recommendations.push({
-      field: 'date',
-      message: 'No date specified. Consider adding one.',
-      severity: 'medium'
-    });
-  }
-  
-  // Check for pricing anomalies
-  data.items?.forEach((item, index) => {
-    if (item.unitPrice <= 0) {
-      recommendations.push({
-        field: `items[${index}].unitPrice`,
-        message: `Unit price for ${item.productName} seems incorrect.`,
-        severity: 'high'
-      });
-    }
-    
-    if (item.quantity <= 0) {
-      recommendations.push({
-        field: `items[${index}].quantity`,
-        message: `Quantity for ${item.productName} seems incorrect.`,
-        severity: 'high'
-      });
-    }
-  });
-  
-  // Payment terms validation
-  if (!data.paymentTerms && !data.terms?.payment) {
-    recommendations.push({
-      field: 'paymentTerms',
-      message: 'Payment terms not specified. Default to 30 days?',
-      severity: 'low'
-    });
-  }
-  
-  return recommendations;
-}
-
-// ================================
-// NEW: DUAL SYSTEM TESTING & COMPARISON ENDPOINTS
-// ================================
-
-// NEW: Test extraction with specific system
-exports.testExtraction = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No file uploaded for testing' 
-      });
-    }
-
-    const { forceSystem = 'mcp', compareWithLegacy = false } = req.body;
-    const user = req.user || { 
-      email: req.body.userEmail || 'test@flowsolution.net',
-      role: 'admin'
-    };
-
-    console.log(`🧪 Test extraction requested - Force: ${forceSystem}, Compare: ${compareWithLegacy}`);
-
-    // Extract PDF text
-    const pdfData = await pdfParse(req.file.buffer);
-    const extractedText = pdfData.text;
-    
-    if (compareWithLegacy) {
-      // Run both systems and compare
-      console.log('🆚 Running comparison test...');
-      
-      const supplierInfo = identifySupplier(extractedText);
-      const documentType = detectDocumentType(extractedText);
-      
-      // Get both prompts
-      const legacyPrompt = getLegacyPrompt(supplierInfo, documentType, documentType);
-      const mcpPrompt = await getPromptForExtraction('mcp', supplierInfo, documentType, user, 'pdf');
-      
-      const startTime = Date.now();
-      
-      // Run extractions in parallel
-      const [legacyResult, mcpResult] = await Promise.all([
-        extractWithAI(extractedText, 'deepseek', legacyPrompt).catch(err => ({ error: err.message })),
-        extractWithAI(extractedText, 'deepseek', mcpPrompt).catch(err => ({ error: err.message }))
-      ]);
-      
-      const totalTime = Date.now() - startTime;
-      
-      // Compare results
-      const comparison = {
-        test_metadata: {
-          file_name: req.file.originalname,
-          file_size: req.file.size,
-          supplier_detected: supplierInfo.supplier,
-          document_type: documentType,
-          processing_time: totalTime,
-          timestamp: new Date().toISOString()
-        },
-        legacy_system: {
-          prompt_used: legacyPrompt.metadata.promptName,
-          prompt_id: legacyPrompt.metadata.promptId,
-          success: !legacyResult.error,
-          error: legacyResult.error || null,
-          data: legacyResult.error ? null : legacyResult,
-          item_count: legacyResult.error ? 0 : (legacyResult.purchase_order?.items?.length || legacyResult.proforma_invoice?.items?.length || 0)
-        },
-        mcp_system: {
-          prompt_used: mcpPrompt.metadata.promptName,
-          prompt_id: mcpPrompt.metadata.promptId,
-          success: !mcpResult.error,
-          error: mcpResult.error || null,
-          data: mcpResult.error ? null : mcpResult,
-          item_count: mcpResult.error ? 0 : (mcpResult.purchase_order?.items?.length || mcpResult.proforma_invoice?.items?.length || 0)
-        },
-        recommendation: generateTestRecommendation(legacyResult, mcpResult)
-      };
-      
-      res.json({
-        success: true,
-        comparison: comparison
-      });
-      
-    } else {
-      // Single system test
-      console.log(`🎯 Testing ${forceSystem} system only...`);
-      
-      const supplierInfo = identifySupplier(extractedText);
-      const documentType = detectDocumentType(extractedText);
-      
-      const selectedPrompt = forceSystem === 'mcp' 
-        ? await getPromptForExtraction('mcp', supplierInfo, documentType, user, 'pdf')
-        : getLegacyPrompt(supplierInfo, documentType, documentType);
-      
-      const startTime = Date.now();
-      const result = await extractWithAI(extractedText, 'deepseek', selectedPrompt);
-      const processingTime = Date.now() - startTime;
-      
-      res.json({
-        success: true,
-        test_result: {
-          system_used: forceSystem,
-          prompt_used: selectedPrompt.metadata.promptName,
-          prompt_id: selectedPrompt.metadata.promptId,
-          processing_time: processingTime,
-          data: result,
-          metadata: {
-            file_name: req.file.originalname,
-            supplier_detected: supplierInfo.supplier,
-            document_type: documentType,
-            timestamp: new Date().toISOString()
-          }
-        }
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Test extraction error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-function generateTestRecommendation(legacyResult, mcpResult) {
-  if (legacyResult.error && mcpResult.error) {
-    return {
-      recommendation: 'Both systems failed',
-      reason: 'Document may be corrupted or unsupported format',
-      suggested_action: 'Check document quality and try again'
-    };
-  }
-  
-  if (legacyResult.error && !mcpResult.error) {
-    return {
-      recommendation: 'Use MCP system',
-      reason: 'Legacy system failed, MCP system succeeded',
-      suggested_action: 'Deploy MCP prompts for this document type'
-    };
-  }
-  
-  if (!legacyResult.error && mcpResult.error) {
-    return {
-      recommendation: 'Use Legacy system',
-      reason: 'MCP system failed, Legacy system succeeded',
-      suggested_action: 'Improve MCP prompts for this document type'
-    };
-  }
-  
-  // Both succeeded - compare quality
-  const legacyItems = legacyResult.purchase_order?.items?.length || legacyResult.proforma_invoice?.items?.length || 0;
-  const mcpItems = mcpResult.purchase_order?.items?.length || mcpResult.proforma_invoice?.items?.length || 0;
-  
-  if (mcpItems > legacyItems) {
-    return {
-      recommendation: 'Use MCP system',
-      reason: `MCP extracted ${mcpItems} items vs ${legacyItems} from Legacy`,
-      suggested_action: 'MCP system shows better extraction completeness'
-    };
-  } else if (legacyItems > mcpItems) {
-    return {
-      recommendation: 'Use Legacy system',
-      reason: `Legacy extracted ${legacyItems} items vs ${mcpItems} from MCP`,
-      suggested_action: 'Legacy system shows better extraction completeness'
-    };
-  } else {
-    return {
-      recommendation: 'Both systems equivalent',
-      reason: `Both extracted ${legacyItems} items`,
-      suggested_action: 'Choose based on other factors (speed, cost, etc.)'
-    };
-  }
-}
-
-// NEW: Batch comparison test
-exports.batchComparisonTest = async (req, res) => {
-  try {
-    const files = req.files;
-    if (!files || files.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No files uploaded for batch testing'
-      });
-    }
-
-    console.log(`🧪 Batch comparison test with ${files.length} files`);
-
-    const results = [];
-    const errors = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      console.log(`📄 Processing file ${i + 1}/${files.length}: ${file.originalname}`);
-
-      try {
-        // Process each file with both systems
-        const pdfData = await pdfParse(file.buffer);
-        const extractedText = pdfData.text;
-        
-        const supplierInfo = identifySupplier(extractedText);
-        const documentType = detectDocumentType(extractedText);
-        
-        const legacyPrompt = getLegacyPrompt(supplierInfo, documentType, documentType);
-        const mcpPrompt = await getPromptForExtraction('mcp', supplierInfo, documentType, { email: 'batch@test.com' }, 'pdf');
-        
-        const startTime = Date.now();
-        
-        const [legacyResult, mcpResult] = await Promise.all([
-          extractWithAI(extractedText, 'deepseek', legacyPrompt).catch(err => ({ error: err.message })),
-          extractWithAI(extractedText, 'deepseek', mcpPrompt).catch(err => ({ error: err.message }))
-        ]);
-        
-        const processingTime = Date.now() - startTime;
-        
-        results.push({
-          file_name: file.originalname,
-          file_index: i + 1,
-          supplier: supplierInfo.supplier,
-          document_type: documentType,
-          processing_time: processingTime,
-          legacy: {
-            success: !legacyResult.error,
-            items_extracted: legacyResult.error ? 0 : (legacyResult.purchase_order?.items?.length || legacyResult.proforma_invoice?.items?.length || 0),
-            error: legacyResult.error
-          },
-          mcp: {
-            success: !mcpResult.error,
-            items_extracted: mcpResult.error ? 0 : (mcpResult.purchase_order?.items?.length || mcpResult.proforma_invoice?.items?.length || 0),
-            error: mcpResult.error
-          }
-        });
-
-      } catch (error) {
-        console.error(`❌ Failed to process ${file.originalname}:`, error);
-        errors.push({
-          file_name: file.originalname,
-          file_index: i + 1,
-          error: error.message
-        });
-      }
-    }
-
-    // Generate batch summary
-    const summary = {
-      total_files: files.length,
-      successful_comparisons: results.length,
-      failed_files: errors.length,
-      legacy_stats: {
-        success_rate: (results.filter(r => r.legacy.success).length / results.length * 100).toFixed(1) + '%',
-        avg_items: results.length > 0 ? (results.reduce((sum, r) => sum + r.legacy.items_extracted, 0) / results.length).toFixed(1) : 0
-      },
-      mcp_stats: {
-        success_rate: (results.filter(r => r.mcp.success).length / results.length * 100).toFixed(1) + '%',
-        avg_items: results.length > 0 ? (results.reduce((sum, r) => sum + r.mcp.items_extracted, 0) / results.length).toFixed(1) : 0
-      },
-      recommendation: generateBatchRecommendation(results)
-    };
-
-    res.json({
-      success: true,
-      batch_comparison: {
-        summary: summary,
-        detailed_results: results,
-        errors: errors,
-        timestamp: new Date().toISOString()
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Batch comparison test error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-function generateBatchRecommendation(results) {
-  if (results.length === 0) return 'No data to analyze';
-  
-  const legacySuccesses = results.filter(r => r.legacy.success).length;
-  const mcpSuccesses = results.filter(r => r.mcp.success).length;
-  
-  const legacyTotalItems = results.reduce((sum, r) => sum + r.legacy.items_extracted, 0);
-  const mcpTotalItems = results.reduce((sum, r) => sum + r.mcp.items_extracted, 0);
-  
-  if (mcpSuccesses > legacySuccesses) {
-    return `MCP system recommended: ${mcpSuccesses}/${results.length} successes vs ${legacySuccesses}/${results.length} for Legacy`;
-  } else if (legacySuccesses > mcpSuccesses) {
-    return `Legacy system recommended: ${legacySuccesses}/${results.length} successes vs ${mcpSuccesses}/${results.length} for MCP`;
-  } else if (mcpTotalItems > legacyTotalItems) {
-    return `MCP system recommended: Better item extraction (${mcpTotalItems} vs ${legacyTotalItems} total items)`;
-  } else if (legacyTotalItems > mcpTotalItems) {
-    return `Legacy system recommended: Better item extraction (${legacyTotalItems} vs ${mcpTotalItems} total items)`;
-  } else {
-    return 'Both systems perform equally - choose based on other factors';
-  }
-}'development' ? error.stack : undefined
-    });
-  }
-};
-
-// NEW: Analytics tracking function
-async function trackExtractionUsage(selectedPrompt, user, supplierInfo, metrics) {
-  try {
-    const analyticsData = {
-      timestamp: new Date().toISOString(),
-      prompt_system: selectedPrompt.system,
-      prompt_id: selectedPrompt.metadata.promptId,
-      prompt_name: selectedPrompt.metadata.promptName,
-      user_email: user.email,
-      supplier: supplierInfo.supplier,
-      success: metrics.success,
-      processing_time: metrics.processingTime,
-      ai_provider: metrics.aiProvider,
-      document_type: metrics.documentType
-    };
-    
-    // Here you could store this in a database or send to analytics service
-    console.log('📊 Analytics tracked:', analyticsData);
-    
-    // Example: Store in database or send to analytics API
-    // await analyticsService.track(analyticsData);
-    
-  } catch (error) {
-    console.warn('📊 Analytics tracking error:', error.message);
-  }
-}
-
-// ================================
-// NEW: DUAL SYSTEM API ENDPOINTS
-// ================================
-
-// NEW: Endpoint to get current prompt system status
-exports.getPromptSystemStatus = async (req, res) => {
-  try {
-    const user = req.user || { 
-      email: req.query.userEmail || 'anonymous',
-      role: req.query.userRole || 'user'
-    };
-    const supplierInfo = { name: req.query.supplier || 'TEST_SUPPLIER' };
-    
-    const promptSystem = selectPromptSystem(user, supplierInfo, {});
-    const selectedPrompt = await getPromptForExtraction(
-      promptSystem, 
-      supplierInfo, 
-      'purchase_order', 
-      user,
-      'pdf'
-    );
-    
-    // Get system statistics
-    const legacyPrompts = getLegacyPromptCount();
-    const mcpPrompts = await mcpPromptService.getPromptCount();
-    
-    res.json({
-      success: true,
-      current_system: promptSystem,
-      selected_prompt: selectedPrompt.metadata,
-      system_stats: {
-        legacy_prompts: legacyPrompts,
-        mcp_prompts: mcpPrompts,
-        test_users: PROMPT_SYSTEM_CONFIG.testUsers.length,
-        test_percentage: PROMPT_SYSTEM_CONFIG.testPercentage
-      },
-      user_info: {
-        email: user.email,
-        role: user.role,
-        is_test_user: PROMPT_SYSTEM_CONFIG.testUsers.includes(user.email)
-      },
-      config: {
-        default_mode: PROMPT_SYSTEM_CONFIG.defaultMode,
-        ab_testing_enabled: PROMPT_SYSTEM_CONFIG.enableABTesting,
-        fallback_enabled: PROMPT_SYSTEM_CONFIG.fallbackToLegacy
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-// NEW: Endpoint to toggle prompt system for testing
-exports.setPromptSystemPreference = async (req, res) => {
-  try {
-    const { userEmail, promptSystem, permanent = false } = req.body;
-    
-    // Validate input
-    if (!userEmail || !promptSystem) {
-      return res.status(400).json({
-        success: false,
-        error: 'userEmail and promptSystem are required'
-      });
-    }
-    
-    if (!['legacy', 'mcp', 'auto'].includes(promptSystem)) {
-      return res.status(400).json({
-        success: false,
-        error: 'promptSystem must be one of: legacy, mcp, auto'
-      });
-    }
-    
-    // For now, we'll just return the setting (you could store this in database)
-    console.log(`🎛️ User preference set: ${userEmail} -> ${promptSystem} (permanent: ${permanent})`);
-    
-    res.json({
-      success: true,
-      message: `Prompt system preference set to ${promptSystem} for ${userEmail}`,
-      setting: {
-        userEmail,
-        promptSystem,
-        permanent,
-        timestamp: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-// NEW: Endpoint to get prompt system analytics
-exports.getPromptSystemAnalytics = async (req, res) => {
-  try {
-    // This would typically come from a database or analytics service
-    const mockAnalytics = {
-      daily_extractions: {
-        legacy_system: { count: 45, avg_accuracy: 92, avg_speed: 2.3 },
-        mcp_system: { count: 12, avg_accuracy: 96, avg_speed: 2.1 }
-      },
-      user_distribution: {
-        legacy_users: 23,
-        mcp_users: 3,
-        ab_test_users: 2
-      },
-      performance_comparison: {
-        accuracy_improvement: '+4%',
-        speed_improvement: '+8%',
-        recommendation: 'Expand MCP system usage'
-      },
-      top_prompts: [
-        { id: 'legacy_base_extraction', name: 'Base Legacy Template', usage: 45, accuracy: 92 },
-        { id: 'legacy_ptp_specific', name: 'PTP Legacy Template', usage: 12, accuracy: 96 },
-        { id: 'mcp_pi_advanced', name: 'Advanced PI MCP', usage: 8, accuracy: 94 }
-      ]
-    };
-    
-    res.json({
-      success: true,
-      analytics: mockAnalytics,
-      timestamp: new Date().toISOString(),
-      period: 'last_7_days'
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-const getLegacyPromptCount = () => {
-  // Count your existing hardcoded prompts
-  return 4; // Base + PTP + PI + Generic variants
-};
-
-// ================================
-// ENHANCED PROJECT CODE EXTRACTION
-// ================================
-
-/**
- * Enhanced project code extraction for PO documents
- */
-function enhanceProjectCodes(extractedData, fullText) {
-  console.log('🏢 Enhancing project codes extraction...');
-  
-  if (!extractedData.items) return extractedData;
-  
-  const projectCodePatterns = [
-    /FS-S\d+/gi,        // PTP format: FS-S3798, FS-S3845
-    /BWS-S\d+/gi,       // BWS format: BWS-S1046
-    /[A-Z]{2,3}-[A-Z]\d+/gi, // Generic format: XX-X1234
-    /Project\s*Code[:\s]+([A-Z0-9-]+)/gi,
-    /Job\s*No[:\s]+([A-Z0-9-]+)/gi,
-    /Ref[:\s]+([A-Z0-9-]+)/gi
-  ];
-  
-  // Split full text into lines for better context matching
-  const textLines = fullText.split('\n');
-  
-  extractedData.items = extractedData.items.map((item, index) => {
-    let projectCode = item.projectCode || '';
-    
-    if (!projectCode) {
-      // Strategy 1: Search in item's own text
-      const itemText = [
-        item.description,
-        item.productName,
-        item.notes,
-        item.partNumber,
-        item.part_number,
-        item.productCode
-      ].filter(Boolean).join(' ');
-      
-      for (const pattern of projectCodePatterns) {
-        const match = itemText.match(pattern);
-        if (match) {
-          projectCode = match[0];
-          console.log(`✅ Found project code in item text: ${projectCode} for item ${index + 1}`);
-          break;
-        }
-      }
-      
-      // Strategy 2: Search in nearby text lines if still not found
-      if (!projectCode && item.description) {
-        for (let i = 0; i < textLines.length; i++) {
-          const line = textLines[i];
-          
-          // If this line contains the item description or part number
-          const searchTerms = [
-            item.description?.substring(0, 20),
-            item.partNumber,
-            item.part_number,
-            item.productCode
-          ].filter(Boolean);
-          
-          const lineContainsItem = searchTerms.some(term => 
-            line.includes(term) && term.length > 3
-          );
-          
-          if (lineContainsItem) {
-            // Check current line and next few lines for project codes
-            for (let j = i; j < Math.min(i + 3, textLines.length); j++) {
-              const searchLine = textLines[j];
-              
-              for (const pattern of projectCodePatterns) {
-                const match = searchLine.match(pattern);
-                if (match) {
-                  projectCode = match[0];
-                  console.log(`✅ Found project code in nearby line: ${projectCode} for item ${index + 1}`);
-                  break;
-                }
-              }
-              if (projectCode) break;
-            }
-          }
-          if (projectCode) break;
-        }
-      }
-    }
-    
-    console.log(`Item ${index + 1}: ${item.description?.substring(0, 30)}... → Project Code: ${projectCode || 'NOT FOUND'}`);
-    
-    return {
-      ...item,
-      projectCode: projectCode.trim(),
-      // Ensure consistent field names for frontend
-      productName: item.description || item.productName || '',
-      productCode: item.partNumber || item.part_number || item.productCode || ''
-    };
-  });
-  
-  const foundCodes = extractedData.items.filter(item => item.projectCode).length;
-  console.log(`🏢 Project code extraction complete: ${foundCodes}/${extractedData.items.length} items have project codes`);
-  
-  return extractedData;
-}
-
-// ================================
-// EXISTING EXTRACTION METHODS (UNCHANGED)
-// ================================
-
-// Bank Payment Slip extraction support
 exports.extractBankPaymentSlip = async (req, res) => {
   try {
     console.log('🏦 Bank Payment Slip extraction request received');
@@ -2102,7 +1223,21 @@ Return ONLY the JSON object, no explanations or markdown.
       console.error('❌ AI extraction failed:', aiError);
       
       // Fallback to pattern-based extraction
-      aiResponse = extractBankPaymentFallback(extractedText);
+      aiResponse = {
+        bank_payment: {
+          reference_number: 'EXTRACTION_FAILED',
+          payment_date: null,
+          payment_amount: null,
+          paid_currency: 'USD',
+          debit_amount: null,
+          debit_currency: 'MYR',
+          exchange_rate: null,
+          bank_name: 'Hong Leong Bank',
+          status: 'Processing failed'
+        },
+        confidence: 0.1,
+        document_type: 'bank_payment_slip'
+      };
     }
 
     const extractionTime = Date.now() - startTime;
@@ -2125,4 +1260,7 @@ Return ONLY the JSON object, no explanations or markdown.
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to extract bank payment data',
-      error: process.env.NODE_ENV ===
+      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
