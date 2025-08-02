@@ -30,10 +30,12 @@ app.use(cors({
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Add middleware to set AI-related headers
+// Add middleware to set AI and MCP headers
 app.use((req, res, next) => {
   res.setHeader('X-HiggsFlow-AI-Version', '2.0.0');
   res.setHeader('X-Modular-AI-Enabled', 'true');
+  res.setHeader('X-MCP-Version', '2.0.0');
+  res.setHeader('X-MCP-WebSocket', `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
   next();
 });
 
@@ -41,11 +43,15 @@ app.use((req, res, next) => {
 const apiRoutes = require('./routes/api.routes');
 app.use('/api', apiRoutes);
 
-// NEW: Add AI routes
+// AI routes
 const aiRoutes = require('./routes/ai.routes');
 app.use('/api/ai', aiRoutes);
 
-// Enhanced health check endpoint with AI system status
+// NEW: MCP routes
+const mcpRoutes = require('./routes/mcp.routes');
+app.use('/api/mcp', mcpRoutes);
+
+// Enhanced health check endpoint with AI and MCP system status
 app.get('/health', async (req, res) => {
   try {
     // Get AI system health
@@ -54,12 +60,24 @@ app.get('/health', async (req, res) => {
     const aiHealth = await aiService.healthCheck();
     const providerStatus = await aiService.getProviderStatus();
     
+    // Get MCP system health
+    let mcpStatus = { status: 'initializing' };
+    try {
+      const MCPIntegrationService = require('./services/mcp/MCPIntegrationService');
+      const mcpService = new MCPIntegrationService();
+      mcpStatus = await mcpService.getStatus();
+    } catch (mcpError) {
+      console.warn('MCP service not yet initialized:', mcpError.message);
+      mcpStatus = { status: 'initializing', error: mcpError.message };
+    }
+    
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       services: {
         core: 'active',
-        modularAI: aiHealth.status, // New modular AI status
+        modularAI: aiHealth.status,
+        mcp: mcpStatus.status, // New MCP status
         ai: 'active'
       },
       ai: {
@@ -69,40 +87,56 @@ app.get('/health', async (req, res) => {
         version: aiHealth.version,
         provider_status: Object.keys(providerStatus).length
       },
+      mcp: {
+        server: mcpStatus.mcp_server || { status: 'initializing' },
+        websocket: mcpStatus.websocket_server || { status: 'initializing' },
+        capabilities: mcpStatus.capabilities || [],
+        version: '2.0.0'
+      },
       timeouts: {
         request: '5 minutes',
         response: '5 minutes',
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-modular-ai',
+      version: '2.0.0-mcp-enhanced',
       endpoints: {
         health: '/health',
         api: '/api',
-        ai: '/api/ai', // New AI management endpoints
-        aiDocs: '/api/ai/docs', // AI API documentation
+        ai: '/api/ai',
+        mcp: '/api/mcp', // New MCP endpoints
+        aiDocs: '/api/ai/docs',
+        mcpDocs: '/api/mcp/docs', // New MCP documentation
         extraction: '/api/purchase-orders/extract',
         bankPayment: '/api/bank-payments/extract',
-        enhancedExtraction: '/api/ai/extract/purchase-order', // Enhanced extraction
-        enhancedPIExtraction: '/api/ai/extract/proforma-invoice' // Enhanced PI extraction
+        enhancedExtraction: '/api/ai/extract/purchase-order',
+        enhancedPIExtraction: '/api/ai/extract/proforma-invoice',
+        mcpExtraction: '/api/mcp/extract', // Enhanced MCP extraction
+        mcpWebSocket: `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`
       },
       features: {
-        modularAI: true, // New feature flag
+        modularAI: true,
         multiProviderAI: true,
         supplierSpecificIntelligence: true,
         enhancedExtraction: true,
         performanceTracking: true,
-        backwardCompatible: true
+        backwardCompatible: true,
+        mcpEnhanced: true, // New MCP feature flag
+        realTimeProcessing: true,
+        batchProcessing: true,
+        streamingSupport: true,
+        websocketCommunication: true
       }
     });
   } catch (error) {
-    console.warn('AI system not fully initialized:', error.message);
+    console.warn('Health check partial failure:', error.message);
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       services: {
         core: 'active',
-        modularAI: 'initializing',
+        modularAI: 'error',
+        mcp: 'error',
         ai: 'active'
       },
       timeouts: {
@@ -111,7 +145,7 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-modular-ai',
+      version: '2.0.0-mcp-enhanced',
       ai_status: 'initializing',
       error: error.message
     });
@@ -121,24 +155,37 @@ app.get('/health', async (req, res) => {
 // Enhanced root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'HiggsFlow Supplier MCP Server with Modular AI',
-    version: '2.0.0-modular-ai',
+    message: 'HiggsFlow Supplier MCP Server with Advanced AI & MCP',
+    version: '2.0.0-mcp-enhanced',
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
       'Supplier-specific intelligence',
       'Performance tracking',
-      'Modular architecture'
+      'Modular architecture',
+      'Model Context Protocol (MCP)',
+      'Real-time WebSocket communication',
+      'Advanced tool orchestration',
+      'Batch processing',
+      'Streaming processes'
     ],
     endpoints: {
       health: '/health',
       api: '/api',
       ai: '/api/ai',
+      mcp: '/api/mcp',
       extraction: '/api/purchase-orders/extract',
       bankPaymentExtraction: '/api/bank-payments/extract',
       enhancedPOExtraction: '/api/ai/extract/purchase-order',
       enhancedPIExtraction: '/api/ai/extract/proforma-invoice',
-      aiDocumentation: '/api/ai/docs'
+      mcpExtraction: '/api/mcp/extract',
+      mcpToolExecution: '/api/mcp/tools/execute',
+      aiDocumentation: '/api/ai/docs',
+      mcpDocumentation: '/api/mcp/docs'
+    },
+    websocket: {
+      mcp: `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`,
+      description: 'Real-time MCP communication and streaming'
     }
   });
 });
@@ -172,6 +219,15 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // MCP-specific errors
+  if (err.message && err.message.includes('MCP')) {
+    return res.status(500).json({
+      success: false,
+      message: 'MCP service error: ' + err.message,
+      context: 'mcp_service'
+    });
+  }
+  
   res.status(500).json({
     success: false,
     message: err.message || 'Internal server error'
@@ -188,29 +244,47 @@ app.use((req, res) => {
 
 // Start server with enhanced logging
 const server = app.listen(PORT, () => {
-  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 is running on port ${PORT}`);
+  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced) is running on port ${PORT}`);
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`);
   
-  // Log new AI endpoints
-  console.log('\n🤖 Modular AI endpoints registered:');
+  // Log AI endpoints
+  console.log('\n🤖 Modular AI endpoints:');
   console.log(`   🏥 GET  http://localhost:${PORT}/api/ai/health - AI system health`);
   console.log(`   🧪 GET  http://localhost:${PORT}/api/ai/test - Quick functionality test`);
   console.log(`   📦 GET  http://localhost:${PORT}/api/ai/modules - Module management`);
   console.log(`   📝 GET  http://localhost:${PORT}/api/ai/prompts - Prompt management`);
   console.log(`   📄 POST http://localhost:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
   console.log(`   📋 POST http://localhost:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
-  console.log(`   📚 GET  http://localhost:${PORT}/api/ai/docs - API documentation`);
+  console.log(`   📚 GET  http://localhost:${PORT}/api/ai/docs - AI API documentation`);
   console.log(`   🔄 POST http://localhost:${PORT}/api/ai/extract-po - Legacy compatibility`);
   console.log(`   🔄 POST http://localhost:${PORT}/api/ai/extract-pi - Legacy compatibility`);
+  
+  // Log new MCP endpoints
+  console.log('\n🔗 MCP endpoints (NEW):');
+  console.log(`   🔧 GET  http://localhost:${PORT}/api/mcp/status - MCP service status`);
+  console.log(`   📋 GET  http://localhost:${PORT}/api/mcp/capabilities - Available capabilities`);
+  console.log(`   🛠️  GET  http://localhost:${PORT}/api/mcp/tools - List MCP tools`);
+  console.log(`   ⚡ POST http://localhost:${PORT}/api/mcp/tools/execute - Execute MCP tool`);
+  console.log(`   📄 POST http://localhost:${PORT}/api/mcp/extract - Enhanced extraction`);
+  console.log(`   🏢 POST http://localhost:${PORT}/api/mcp/analyze/supplier - Supplier analysis`);
+  console.log(`   💡 POST http://localhost:${PORT}/api/mcp/recommendations - AI recommendations`);
+  console.log(`   📦 POST http://localhost:${PORT}/api/mcp/batch - Batch processing`);
+  console.log(`   🔄 POST http://localhost:${PORT}/api/mcp/stream - Streaming processes`);
+  console.log(`   📊 GET  http://localhost:${PORT}/api/mcp/monitor - System monitoring`);
+  console.log(`   📚 GET  http://localhost:${PORT}/api/mcp/docs - MCP API documentation`);
+  console.log(`   🌐 WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
   
   // Environment variables check
   const requiredEnvVars = ['DEEPSEEK_API_KEY'];
   const optionalEnvVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_AI_API_KEY'];
+  const mcpEnvVars = ['MCP_WS_PORT'];
+  
   const missingRequired = requiredEnvVars.filter(envVar => !process.env[envVar]);
   const missingOptional = optionalEnvVars.filter(envVar => !process.env[envVar]);
+  const missingMCP = mcpEnvVars.filter(envVar => !process.env[envVar]);
 
   if (missingRequired.length > 0) {
     console.log('\n⚠️  Missing REQUIRED environment variables:');
@@ -230,6 +304,13 @@ const server = app.listen(PORT, () => {
     console.log('✅ All AI providers configured for maximum capabilities');
   }
   
+  if (missingMCP.length > 0) {
+    console.log('\n💡 MCP configuration using defaults:');
+    console.log(`   - MCP_WS_PORT: ${process.env.MCP_WS_PORT || 8080} (default)`);
+  } else {
+    console.log('✅ MCP configuration complete');
+  }
+  
   console.log('\n🎯 Features enabled:');
   console.log('   ✅ Modular AI architecture');
   console.log('   ✅ Multi-provider AI support');
@@ -237,10 +318,16 @@ const server = app.listen(PORT, () => {
   console.log('   ✅ Enhanced document extraction');
   console.log('   ✅ Performance tracking and analytics');
   console.log('   ✅ Backward compatibility with existing APIs');
+  console.log('   ✅ Model Context Protocol (MCP) integration');
+  console.log('   ✅ Real-time WebSocket communication');
+  console.log('   ✅ Advanced AI tool orchestration');
+  console.log('   ✅ Batch processing capabilities');
+  console.log('   ✅ Streaming process support');
   
-  console.log('\n🚀 Ready for Phase 1 testing!');
-  console.log(`   Run: node scripts/ai/test-modular-ai.js`);
-  console.log(`   Or visit: http://localhost:${PORT}/api/ai/docs`);
+  console.log('\n🚀 Phase 2 (MCP Enhancement) ready for testing!');
+  console.log(`   Test: curl http://localhost:${PORT}/api/mcp/status`);
+  console.log(`   Docs: http://localhost:${PORT}/api/mcp/docs`);
+  console.log(`   WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
 });
 
 // Graceful shutdown
