@@ -1,0 +1,83 @@
+[
+  {
+    "id": "document_extraction",
+    "name": "Document Extraction",
+    "description": "Extract data from PDFs, images, and documents",
+    "category": "extraction",
+    "status": "active",
+    "version": "2.1.0",
+    "icon": "📄",
+    "features": [
+      "PDF Processing",
+      "OCR",
+      "Table Detection",
+      "Supplier-Specific"
+    ],
+    "endpoints": [
+      "/api/ai/extract/document",
+      "/api/extract-po",
+      "/api/extract-pi"
+    ],
+    "usage": {
+      "daily": 252,
+      "weekly": 1680,
+      "monthly": 7200
+    },
+    "accuracy": 92,
+    "createdAt": "2025-08-02T13:20:46.051Z",
+    "lastModified": "2025-08-02T13:20:47.070Z",
+    "prompts": []
+  },
+  {
+    "id": "supplier_intelligence",
+    "name": "Supplier Intelligence",
+    "description": "AI-powered supplier analysis and insights",
+    "category": "analytics",
+    "status": "development",
+    "version": "1.0.0",
+    "icon": "🧠",
+    "features": [
+      "Performance Analysis",
+      "Risk Assessment",
+      "Price Intelligence"
+    ],
+    "endpoints": [
+      "/api/ai/analyze/supplier"
+    ],
+    "usage": {
+      "daily": 0,
+      "weekly": 0,
+      "monthly": 0
+    },
+    "accuracy": 0,
+    "createdAt": "2025-08-02T13:20:46.051Z",
+    "lastModified": "2025-08-02T13:20:46.051Z",
+    "prompts": []
+  },
+  {
+    "id": "email_processing",
+    "name": "Email Processing",
+    "description": "Intelligent email classification and processing",
+    "category": "communication",
+    "status": "planned",
+    "version": "0.1.0",
+    "icon": "📧",
+    "features": [
+      "Auto-Classification",
+      "Content Extraction",
+      "Priority Detection"
+    ],
+    "endpoints": [
+      "/api/ai/classify/email"
+    ],
+    "usage": {
+      "daily": 0,
+      "weekly": 0,
+      "monthly": 0
+    },
+    "accuracy": 0,
+    "createdAt": "2025-08-02T13:20:46.051Z",
+    "lastModified": "2025-08-02T13:20:46.051Z",
+    "prompts": []
+  }
+]

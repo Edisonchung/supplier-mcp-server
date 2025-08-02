@@ -1,0 +1,83 @@
+[
+  {
+    "id": "po_extraction_base",
+    "name": "Purchase Order - Base Extraction",
+    "moduleId": "document_extraction",
+    "category": "purchase_order",
+    "version": "1.3.0",
+    "isActive": true,
+    "documentTypes": [
+      "pdf",
+      "image"
+    ],
+    "suppliers": [
+      "ALL"
+    ],
+    "aiProvider": "deepseek",
+    "temperature": 0.1,
+    "maxTokens": 2000,
+    "createdAt": "2025-08-02T13:20:46.052Z",
+    "lastModified": "2025-08-02T13:20:46.052Z",
+    "prompt": "Extract purchase order information with PRECISE table column identification.\n\nCRITICAL RULES FOR HIGGSFLOW:\n1. ALWAYS identify exact column order from table headers\n2. QUANTITY vs UNIT PRICE identification:\n   - Quantity: Usually smaller numbers (1-10,000 range)\n   - Unit Price: Usually larger monetary values with decimals ($100.00, $2,200.00)\n3. VALIDATION: quantity × unitPrice should ≈ totalPrice\n4. If calculation mismatch > 10%, SWAP values and re-check\n\nCOMMON PO TABLE PATTERNS:\n- Line | Part Number | Description | Quantity | UOM | Unit Price | Amount\n- Line | Part Number | Delivery Date | Quantity | UOM | Unit Price | TAX | Amount\n\nRETURN STRUCTURED JSON:\n{\n  \"purchase_order\": {\n    \"poNumber\": \"string\",\n    \"dateIssued\": \"string\", \n    \"supplier\": {\n      \"name\": \"string\",\n      \"address\": \"string\"\n    },\n    \"items\": [\n      {\n        \"lineNumber\": number,\n        \"productCode\": \"string\",\n        \"productName\": \"string\",\n        \"quantity\": number,\n        \"unit\": \"string\", \n        \"unitPrice\": number,\n        \"totalPrice\": number\n      }\n    ],\n    \"totalAmount\": number\n  }\n}",
+    "performance": {
+      "accuracy": 92,
+      "speed": 2.3,
+      "tokens": 1250,
+      "lastTested": null
+    }
+  },
+  {
+    "id": "ptp_supplier_specific",
+    "name": "PTP Supplier - Enhanced Extraction",
+    "moduleId": "document_extraction",
+    "category": "purchase_order",
+    "version": "1.1.0",
+    "isActive": true,
+    "documentTypes": [
+      "pdf"
+    ],
+    "suppliers": [
+      "PTP",
+      "PT. PERINTIS TEKNOLOGI PERDANA"
+    ],
+    "aiProvider": "deepseek",
+    "temperature": 0.1,
+    "maxTokens": 2000,
+    "createdAt": "2025-08-02T13:20:46.052Z",
+    "lastModified": "2025-08-02T13:20:46.052Z",
+    "prompt": "PTP Purchase Order - SPECIALIZED EXTRACTION for PT. PERINTIS TEKNOLOGI PERDANA\n\nTABLE LAYOUT: Line | Part Number | Delivery Date | Quantity | UOM | Unit Price | TAX | Amount\n\nCRITICAL PTP-SPECIFIC RULES:\n1. Quantity in column 4 (after Delivery Date)\n2. Unit Price in column 6 (after UOM)\n3. Amount in column 8 (final column)\n4. Part numbers: 200RTG*, 400CON*, 400SHA*, 400RTG*\n\n⚠️ SPECIAL PTP MULTI-LINE FORMAT:\n- Line 1: \"400QCR1068    1.00   PCS   20,500.00\"\n- Line 2: \"THRUSTER\" ← This is the ACTUAL product name\n- DO NOT extract UOM values (PCS, UNI, SET, EA) as product names!\n\nVALIDATION FOR PTP:\n- quantity × unitPrice = amount (±5% tolerance)\n- If mismatch detected, check for column misalignment\n\nRETURN PTP-OPTIMIZED JSON:\n{\n  \"purchase_order\": {\n    \"supplier\": {\n      \"name\": \"PT. PERINTIS TEKNOLOGI PERDANA\",\n      \"type\": \"PTP_TEMPLATE\"\n    },\n    \"items\": [\n      {\n        \"productCode\": \"400QCR1068\",\n        \"productName\": \"THRUSTER\",\n        \"quantity\": 1,\n        \"unit\": \"PCS\",\n        \"unitPrice\": 20500.00,\n        \"totalPrice\": 20500.00,\n        \"extractionNotes\": \"Multi-line format processed\"\n      }\n    ]\n  },\n  \"metadata\": {\n    \"supplier\": \"PTP\",\n    \"extractionMethod\": \"PTP_SPECIALIZED\",\n    \"confidence\": 0.95\n  }\n}",
+    "performance": {
+      "accuracy": 96,
+      "speed": 2.1,
+      "tokens": 980,
+      "lastTested": null
+    }
+  },
+  {
+    "id": "pi_extraction_base",
+    "name": "Proforma Invoice - Base Extraction",
+    "moduleId": "document_extraction",
+    "category": "proforma_invoice",
+    "version": "1.1.0",
+    "isActive": true,
+    "documentTypes": [
+      "pdf",
+      "email"
+    ],
+    "suppliers": [
+      "ALL"
+    ],
+    "aiProvider": "deepseek",
+    "temperature": 0.1,
+    "maxTokens": 2000,
+    "createdAt": "2025-08-02T13:20:46.052Z",
+    "lastModified": "2025-08-02T13:20:46.052Z",
+    "prompt": "Extract proforma invoice information for HiggsFlow procurement system.\n\nPROFORMA INVOICE PARSING RULES:\n1. Identify PI number, date, validity period\n2. Extract complete supplier and buyer information\n3. Parse itemized products with accurate pricing\n4. Calculate totals including taxes and terms\n\nKEY FIELDS TO EXTRACT:\n- PI Number (usually starts with \"PI\", \"PRO\", or numeric)\n- Issue date and validity date\n- Supplier details (name, address, contact)\n- Buyer information\n- Itemized products with quantities and prices\n- Payment and delivery terms\n\nRETURN STRUCTURED JSON:\n{\n  \"proforma_invoice\": {\n    \"piNumber\": \"string\",\n    \"date\": \"string\",\n    \"validityPeriod\": \"string\",\n    \"supplier\": {\n      \"name\": \"string\",\n      \"address\": \"string\",\n      \"contact\": \"string\"\n    },\n    \"buyer\": {\n      \"name\": \"string\",\n      \"address\": \"string\"\n    },\n    \"items\": [\n      {\n        \"productCode\": \"string\",\n        \"productName\": \"string\",\n        \"quantity\": number,\n        \"unit\": \"string\",\n        \"unitPrice\": number,\n        \"totalPrice\": number\n      }\n    ],\n    \"totals\": {\n      \"subtotal\": number,\n      \"tax\": number,\n      \"shipping\": number,\n      \"grandTotal\": number\n    },\n    \"terms\": {\n      \"payment\": \"string\",\n      \"delivery\": \"string\"\n    }\n  }\n}",
+    "performance": {
+      "accuracy": 88,
+      "speed": 2.1,
+      "tokens": 980,
+      "lastTested": null
+    }
+  }
+]
