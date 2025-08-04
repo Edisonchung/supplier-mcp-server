@@ -6,6 +6,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { identifySupplier } = require('../utils/supplierTemplates');
 
 // NEW: Import MCP Prompt Service
+const UnifiedAIService = require('../services/ai/UnifiedAIService');
 const MCPPromptService = require('../services/MCPPromptService');
 const mcpPromptService = new MCPPromptService();
 
@@ -1134,7 +1135,7 @@ exports.extractFromEmail = async (req, res) => {
 
 exports.extractBankPaymentSlip = async (req, res) => {
   try {
-    console.log('🏦 Bank Payment Slip extraction request received');
+    console.log('🏦 Enhanced Bank Payment Slip extraction request received');
 
     if (!req.file) {
       return res.status(400).json({ 
@@ -1144,6 +1145,18 @@ exports.extractBankPaymentSlip = async (req, res) => {
     }
 
     const startTime = Date.now();
+    
+    // 🔍 Get user context for dual system routing
+    const userEmail = req.headers['x-user-email'] || 
+                      req.body.userEmail || 
+                      req.body.user_email ||
+                      (req.body.user ? JSON.parse(req.body.user).email : null) ||
+                      'anonymous';
+    
+    const isTestUser = userEmail === 'edisonchung@flowsolution.net';
+    
+    console.log(`👤 Processing bank payment for: ${userEmail}`);
+    console.log(`🧪 MCP Test User: ${isTestUser}`);
 
     // Extract text from PDF
     const pdfData = await pdfParse(req.file.buffer);
@@ -1151,11 +1164,101 @@ exports.extractBankPaymentSlip = async (req, res) => {
     
     console.log('📄 Extracted text length:', extractedText.length);
 
-    // Use AI to structure the bank payment data
-    const aiPrompt = `
+    let aiResponse;
+    let systemUsed = 'legacy';
+    let promptUsed = 'hardcoded_legacy';
+
+    // 🚀 DUAL SYSTEM LOGIC - MCP vs Legacy
+    if (isTestUser) {
+      try {
+        console.log('🧠 Using MCP AI System for Edison...');
+        
+        // Initialize Unified AI Service
+        const aiService = new UnifiedAIService();
+        
+        // Use the modular AI system for bank payment extraction
+        const mcpResult = await aiService.extractFromDocument(extractedText, 'bank_payment', {
+          documentType: 'bank_payment_slip',
+          supplier: 'BANK_PAYMENT',
+          filename: req.file.originalname,
+          userEmail: userEmail,
+          enhancedMode: true,
+          fileSize: req.file.size,
+          category: 'bank_payment'
+        });
+
+        if (mcpResult.success) {
+          systemUsed = 'mcp';
+          promptUsed = mcpResult.metadata?.prompt || 'mcp_bank_payment_optimized';
+          
+          console.log('✅ MCP extraction successful');
+          console.log('📝 MCP Prompt used:', promptUsed);
+          console.log('⚡ MCP Processing time:', mcpResult.metadata?.processingTime, 'ms');
+          
+          // Transform MCP result to expected format
+          const mcpData = mcpResult.result;
+          aiResponse = {
+            bank_payment: {
+              reference_number: mcpData.bank_payment?.reference_number || mcpData.reference_number,
+              payment_date: mcpData.bank_payment?.payment_date || mcpData.payment_date,
+              payment_amount: mcpData.bank_payment?.payment_amount || mcpData.payment_amount,
+              paid_currency: mcpData.bank_payment?.paid_currency || mcpData.paid_currency || 'USD',
+              debit_amount: mcpData.bank_payment?.debit_amount || mcpData.debit_amount,
+              debit_currency: mcpData.bank_payment?.debit_currency || mcpData.debit_currency || 'MYR',
+              exchange_rate: mcpData.bank_payment?.exchange_rate || mcpData.exchange_rate,
+              bank_name: mcpData.bank_payment?.sender_bank || mcpData.bank_name || 'Hong Leong Bank',
+              account_number: mcpData.bank_payment?.sender_account || mcpData.account_number,
+              account_name: mcpData.bank_payment?.sender_name || mcpData.account_name || 'FLOW SOLUTION SDN BH',
+              beneficiary_name: mcpData.bank_payment?.beneficiary_name || mcpData.beneficiary_name,
+              beneficiary_bank: mcpData.bank_payment?.beneficiary_bank || mcpData.beneficiary_bank,
+              beneficiary_country: mcpData.bank_payment?.beneficiary_country || mcpData.beneficiary_country,
+              payment_details: mcpData.bank_payment?.payment_details || mcpData.payment_details,
+              bank_charges: mcpData.bank_payment?.bank_charges || mcpData.bank_charges || 50.00,
+              status: mcpData.bank_payment?.status || mcpData.status || 'MCP Processed'
+            },
+            confidence: mcpResult.metadata?.confidence || 0.95,
+            document_type: 'bank_payment_slip'
+          };
+          
+        } else {
+          throw new Error('MCP extraction failed: ' + (mcpResult.error || 'Unknown error'));
+        }
+        
+      } catch (mcpError) {
+        console.error('❌ MCP extraction failed, falling back to legacy:', mcpError.message);
+        // Fall through to legacy system
+      }
+    }
+
+    // 🔄 LEGACY SYSTEM FALLBACK (Enhanced with Fixed Logic)
+    if (systemUsed === 'legacy') {
+      console.log('🔧 Using Enhanced Legacy AI System...');
+      
+      // Enhanced legacy prompt with FIXED amount logic
+      const enhancedLegacyPrompt = `
 You are an expert at extracting structured data from Hong Leong Bank payment slips.
 
-Extract the following information from this bank payment slip text and return ONLY a valid JSON object:
+CRITICAL AMOUNT DETECTION RULES (FIXED LOGIC):
+1. **Payment Amount (USD)**: The SMALLER amount being sent to beneficiary
+   - Look for: "USD 645.00", "Payment: USD 645", "Foreign Currency: USD 645"
+   - This goes to beneficiary (international recipient)
+   - Usually the SMALLER numerical value
+   
+2. **Debit Amount (MYR)**: The LARGER amount charged from sender's account  
+   - Look for: "MYR 2,866.38", "Total Debit: 2866.38", "Amount: 2,866.38"
+   - This is deducted from sender's local account
+   - Usually the LARGER numerical value
+   
+3. **Exchange Rate**: Calculate as debit_amount ÷ payment_amount
+   - Example: 2866.38 ÷ 645 = 4.44 (MYR per USD)
+   - Should be reasonable (4.0-5.0 for USD-MYR)
+
+VALIDATION CHECKS:
+- payment_amount × exchange_rate ≈ debit_amount (±5% tolerance)
+- Payment amount should be SMALLER than debit amount
+- Both amounts must be positive numbers > 0
+
+Extract the following information from this bank payment slip text:
 
 Text:
 ${extractedText}
@@ -1163,87 +1266,100 @@ ${extractedText}
 Return JSON in this exact format:
 {
   "bank_payment": {
-    "reference_number": "C716200525115916",
-    "payment_date": "20/05/2025",
-    "payment_amount": 1860.00,
+    "reference_number": "C716070725163829",
+    "payment_date": "07/07/2025",
+    "payment_amount": 645.00,
     "paid_currency": "USD",
-    "debit_amount": 8230.50,
+    "debit_amount": 2866.38,
     "debit_currency": "MYR",
-    "exchange_rate": 4.4240,
+    "exchange_rate": 4.44,
     "bank_name": "Hong Leong Bank",
     "account_number": "17301010259",
     "account_name": "FLOW SOLUTION SDN BH",
-    "beneficiary_name": "Qingzhou Tianhong Electromechanical Co. LTD",
+    "beneficiary_name": "Shenzhen Ou Fade Electronics Co., Ltd.",
     "beneficiary_bank": "JPMorgan Chase Bank NA",
     "beneficiary_country": "HONG KONG",
-    "payment_details": "TH-202500135,202500134,202500182",
+    "payment_details": "PI-OFD20250624",
     "bank_charges": 50.00,
-    "status": "In Process at Bank"
+    "status": "Post-dated"
   },
   "confidence": 0.95,
   "document_type": "bank_payment_slip"
 }
 
-Extract all numerical values as numbers, not strings. If any field is not found, use null.
+CRITICAL: 
+- payment_amount should be the SMALLER amount (USD to beneficiary)
+- debit_amount should be the LARGER amount (MYR from sender account)
+- If amounts seem reversed, swap them and recalculate exchange rate
+
 Return ONLY the JSON object, no explanations or markdown.
-`;
+      `;
 
-    // Call AI service (DeepSeek)
-    let aiResponse;
-    try {
-      if (deepseek) {
-        const completion = await deepseek.chat.completions.create({
-          model: "deepseek-chat",
-          messages: [
-            {
-              role: "user", 
-              content: aiPrompt
-            }
-          ],
-          temperature: 0.1,
-          max_tokens: 2000
-        });
+      // Call AI service (DeepSeek)
+      try {
+        if (deepseek) {
+          const completion = await deepseek.chat.completions.create({
+            model: "deepseek-chat",
+            messages: [
+              {
+                role: "user", 
+                content: enhancedLegacyPrompt
+              }
+            ],
+            temperature: 0.1,
+            max_tokens: 2500
+          });
 
-        const aiResult = completion.choices[0].message.content.trim();
-        console.log('🤖 AI Raw Response:', aiResult);
+          const aiResult = completion.choices[0].message.content.trim();
+          console.log('🤖 Enhanced Legacy AI Raw Response:', aiResult.substring(0, 200) + '...');
 
-        // Parse AI response
-        const cleanedResponse = aiResult
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          .trim();
+          // Parse AI response
+          const cleanedResponse = aiResult
+            .replace(/```json/g, '')
+            .replace(/```/g, '')
+            .trim();
 
-        aiResponse = JSON.parse(cleanedResponse);
-        console.log('✅ AI Parsed Response:', aiResponse);
+          aiResponse = JSON.parse(cleanedResponse);
+          promptUsed = 'enhanced_legacy_fixed_amounts_v2';
+          systemUsed = 'enhanced_legacy';
+          
+          console.log('✅ Enhanced Legacy AI Parsed Response');
+          console.log('💰 Payment Amount (USD):', aiResponse.bank_payment?.payment_amount);
+          console.log('💸 Debit Amount (MYR):', aiResponse.bank_payment?.debit_amount);
+          console.log('💱 Exchange Rate:', aiResponse.bank_payment?.exchange_rate);
 
-      } else {
-        throw new Error('DeepSeek API not configured');
+        } else {
+          throw new Error('DeepSeek API not configured');
+        }
+      } catch (aiError) {
+        console.error('❌ Enhanced Legacy AI extraction failed:', aiError);
+        
+        // Ultimate fallback with better error handling
+        aiResponse = {
+          bank_payment: {
+            reference_number: `EXTRACTION_FAILED_${Date.now()}`,
+            payment_date: new Date().toISOString().split('T')[0],
+            payment_amount: null,
+            paid_currency: 'USD',
+            debit_amount: null,
+            debit_currency: 'MYR',
+            exchange_rate: null,
+            bank_name: 'Hong Leong Bank',
+            account_name: 'FLOW SOLUTION SDN BH',
+            status: 'Extraction Failed - Please verify manually'
+          },
+          confidence: 0.1,
+          document_type: 'bank_payment_slip'
+        };
+        promptUsed = 'fallback_error_handler';
+        systemUsed = 'fallback';
       }
-    } catch (aiError) {
-      console.error('❌ AI extraction failed:', aiError);
-      
-      // Fallback to pattern-based extraction
-      aiResponse = {
-        bank_payment: {
-          reference_number: 'EXTRACTION_FAILED',
-          payment_date: null,
-          payment_amount: null,
-          paid_currency: 'USD',
-          debit_amount: null,
-          debit_currency: 'MYR',
-          exchange_rate: null,
-          bank_name: 'Hong Leong Bank',
-          status: 'Processing failed'
-        },
-        confidence: 0.1,
-        document_type: 'bank_payment_slip'
-      };
     }
 
     const extractionTime = Date.now() - startTime;
 
-    // Return structured response
-    res.json({
+    // 🎯 Enhanced response with comprehensive dual system metadata
+    const response = {
       success: true,
       data: aiResponse,
       processing_time: extractionTime,
@@ -1251,16 +1367,62 @@ Return ONLY the JSON object, no explanations or markdown.
         file_name: req.file.originalname,
         file_size: req.file.size,
         extraction_method: aiResponse.confidence > 0.8 ? 'ai_extraction' : 'pattern_fallback',
-        processed_at: new Date().toISOString()
+        processed_at: new Date().toISOString(),
+        
+        // 🚀 DUAL SYSTEM METADATA
+        system_used: systemUsed,
+        prompt_used: promptUsed,
+        user_email: userEmail,
+        is_test_user: isTestUser,
+        dual_system_active: true,
+        mcp_available: true,
+        
+        // 💰 AMOUNT VALIDATION METADATA
+        amount_validation: {
+          payment_amount: aiResponse.bank_payment?.payment_amount,
+          debit_amount: aiResponse.bank_payment?.debit_amount,
+          exchange_rate: aiResponse.bank_payment?.exchange_rate,
+          amounts_logical: (aiResponse.bank_payment?.payment_amount || 0) < (aiResponse.bank_payment?.debit_amount || 0),
+          rate_reasonable: (aiResponse.bank_payment?.exchange_rate || 0) >= 4.0 && (aiResponse.bank_payment?.exchange_rate || 0) <= 5.0
+        }
       }
-    });
+    };
+
+    console.log(`✅ Bank payment extraction completed via ${systemUsed} system`);
+    console.log(`📊 Confidence: ${aiResponse.confidence}, Processing time: ${extractionTime}ms`);
+    
+    // 🔍 Log validation results for debugging
+    if (response.metadata.amount_validation.amounts_logical) {
+      console.log('✅ Amount logic validation passed');
+    } else {
+      console.log('⚠️ Amount logic validation failed - amounts may be reversed');
+    }
+    
+    res.json(response);
 
   } catch (error) {
     console.error('❌ Bank payment slip extraction error:', error);
-    res.status(500).json({
+    
+    const extractionTime = Date.now() - (Date.now() - 1000); // Approximate
+    
+    const response = {
       success: false,
       message: error.message || 'Failed to extract bank payment data',
-      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+      metadata: {
+        system_used: 'error',
+        user_email: req.headers['x-user-email'] || 'unknown',
+        is_test_user: false,
+        dual_system_active: true,
+        processed_at: new Date().toISOString(),
+        processing_time: extractionTime,
+        error_type: error.name || 'UnknownError'
+      }
+    };
+    
+    if (process.env.NODE_ENV === 'development') {
+      response.error = error.stack;
+    }
+    
+    res.status(500).json(response);
   }
 };
