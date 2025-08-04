@@ -1,4 +1,4 @@
-//services/ai/PromptManager.js
+//services/ai/PromptManager.js - UPDATED WITH MISSING METHODS
 const fs = require('fs').promises;
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -283,39 +283,169 @@ RETURN STRUCTURED JSON:
     return bestPrompt;
   }
 
-  // Save or update prompt
-  async savePrompt(promptData) {
-    const prompt = {
-      id: promptData.id || `prompt_${uuidv4()}`,
-      ...promptData,
-      lastModified: new Date().toISOString(),
-      version: promptData.version || '1.0.0'
-    };
-
-    this.prompts.set(prompt.id, prompt);
-    return await this.savePrompts();
+  // 🔧 NEW: Get individual prompt
+  async getPrompt(promptId) {
+    try {
+      const prompt = this.prompts.get(promptId);
+      
+      if (prompt) {
+        console.log(`✅ Retrieved prompt: ${promptId} - ${prompt.name}`);
+        return prompt;
+      } else {
+        console.log(`⚠️ Prompt not found: ${promptId}`);
+        return null;
+      }
+    } catch (error) {
+      console.error(`❌ Error getting prompt ${promptId}:`, error.message);
+      throw error;
+    }
   }
 
-  // Test prompt performance
+  // Save or update prompt (enhanced version)
+  async savePrompt(promptData) {
+    try {
+      const prompt = {
+        id: promptData.id || `prompt_${uuidv4()}`,
+        ...promptData,
+        lastModified: new Date().toISOString(),
+        version: promptData.version || '1.0.0'
+      };
+
+      // If this is a new prompt without createdAt, add it
+      if (!prompt.createdAt) {
+        prompt.createdAt = new Date().toISOString();
+      }
+
+      this.prompts.set(prompt.id, prompt);
+      const success = await this.savePrompts();
+      
+      if (success) {
+        console.log(`✅ Prompt saved: ${prompt.id} - ${prompt.name}`);
+      } else {
+        console.error(`❌ Failed to save prompt: ${prompt.id}`);
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('❌ Error saving prompt:', error.message);
+      throw error;
+    }
+  }
+
+  // 🔧 NEW: Update existing prompt
+  async updatePrompt(promptId, promptData) {
+    try {
+      const existingPrompt = this.prompts.get(promptId);
+      
+      if (!existingPrompt) {
+        console.log(`⚠️ Prompt not found for update: ${promptId}, creating new one`);
+        // If doesn't exist, create it with the specified ID
+        return await this.savePrompt({ ...promptData, id: promptId });
+      }
+
+      const updatedPrompt = {
+        ...existingPrompt,
+        ...promptData,
+        id: promptId, // Ensure ID doesn't change
+        lastModified: new Date().toISOString(),
+        // Preserve createdAt from original
+        createdAt: existingPrompt.createdAt
+      };
+
+      this.prompts.set(promptId, updatedPrompt);
+      const success = await this.savePrompts();
+
+      if (success) {
+        console.log(`✅ Prompt updated: ${promptId} - ${updatedPrompt.name}`);
+      } else {
+        console.error(`❌ Failed to update prompt: ${promptId}`);
+      }
+
+      return success;
+    } catch (error) {
+      console.error(`❌ Error updating prompt ${promptId}:`, error.message);
+      throw error;
+    }
+  }
+
+  // 🔧 NEW: Delete prompt
+  async deletePrompt(promptId) {
+    try {
+      const existingPrompt = this.prompts.get(promptId);
+      
+      if (!existingPrompt) {
+        console.log(`⚠️ Prompt not found for deletion: ${promptId}`);
+        return false;
+      }
+
+      // Remove from memory
+      this.prompts.delete(promptId);
+      
+      // Save to file
+      const success = await this.savePrompts();
+
+      if (success) {
+        console.log(`✅ Prompt deleted: ${promptId} - ${existingPrompt.name}`);
+      } else {
+        console.error(`❌ Failed to delete prompt: ${promptId}`);
+        // Restore in memory if file save failed
+        this.prompts.set(promptId, existingPrompt);
+      }
+
+      return success;
+    } catch (error) {
+      console.error(`❌ Error deleting prompt ${promptId}:`, error.message);
+      throw error;
+    }
+  }
+
+  // Test prompt performance (enhanced)
   async testPrompt(promptId, testData) {
     const prompt = this.prompts.get(promptId);
     if (!prompt) {
       throw new Error(`Prompt not found: ${promptId}`);
     }
 
-    // Simulate test results (replace with actual AI call)
-    return {
-      success: true,
-      promptId,
-      testData,
-      result: {
-        accuracy: Math.random() * 0.2 + 0.8, // 80-100%
-        responseTime: Math.random() * 2000 + 1000, // 1-3 seconds
-        tokens: Math.floor(prompt.prompt.length * 1.2),
-        confidence: Math.random() * 0.3 + 0.7 // 70-100%
-      },
-      timestamp: new Date().toISOString()
-    };
+    try {
+      // Simulate test results (replace with actual AI call)
+      const testResult = {
+        success: true,
+        promptId,
+        promptName: prompt.name,
+        testData,
+        result: {
+          accuracy: Math.random() * 0.2 + 0.8, // 80-100%
+          responseTime: Math.random() * 2000 + 1000, // 1-3 seconds
+          tokens: Math.floor(prompt.prompt.length * 1.2),
+          confidence: Math.random() * 0.3 + 0.7, // 70-100%
+          provider: prompt.aiProvider || 'deepseek'
+        },
+        metadata: {
+          promptVersion: prompt.version,
+          category: prompt.category,
+          suppliers: prompt.suppliers,
+          testTimestamp: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString()
+      };
+
+      // Update prompt performance data
+      prompt.performance = {
+        ...prompt.performance,
+        lastTested: new Date().toISOString(),
+        testCount: (prompt.performance?.testCount || 0) + 1
+      };
+
+      // Save updated prompt
+      await this.savePrompts();
+
+      console.log(`✅ Prompt tested: ${promptId} - Confidence: ${testResult.result.confidence.toFixed(2)}`);
+      
+      return testResult;
+    } catch (error) {
+      console.error(`❌ Error testing prompt ${promptId}:`, error.message);
+      throw error;
+    }
   }
 
   // Get all prompts
@@ -326,6 +456,82 @@ RETURN STRUCTURED JSON:
   // Get prompts by module
   getPromptsByModule(moduleId) {
     return Array.from(this.prompts.values()).filter(p => p.moduleId === moduleId);
+  }
+
+  // 🔧 NEW: Get prompts by category
+  getPromptsByCategory(category) {
+    return Array.from(this.prompts.values()).filter(p => p.category === category);
+  }
+
+  // 🔧 NEW: Get active prompts only
+  getActivePrompts() {
+    return Array.from(this.prompts.values()).filter(p => p.isActive);
+  }
+
+  // 🔧 NEW: Get prompts by supplier
+  getPromptsBySupplier(supplier) {
+    return Array.from(this.prompts.values()).filter(p => 
+      p.suppliers?.includes('ALL') || p.suppliers?.includes(supplier)
+    );
+  }
+
+  // 🔧 NEW: Get prompt statistics
+  getPromptStats() {
+    const prompts = this.getAllPrompts();
+    
+    return {
+      total: prompts.length,
+      active: prompts.filter(p => p.isActive).length,
+      inactive: prompts.filter(p => !p.isActive).length,
+      byCategory: prompts.reduce((acc, p) => {
+        acc[p.category] = (acc[p.category] || 0) + 1;
+        return acc;
+      }, {}),
+      byProvider: prompts.reduce((acc, p) => {
+        const provider = p.aiProvider || 'unknown';
+        acc[provider] = (acc[provider] || 0) + 1;
+        return acc;
+      }, {}),
+      tested: prompts.filter(p => p.performance?.lastTested).length,
+      averageAccuracy: prompts
+        .filter(p => p.performance?.accuracy)
+        .reduce((sum, p) => sum + p.performance.accuracy, 0) / 
+        prompts.filter(p => p.performance?.accuracy).length || 0
+    };
+  }
+
+  // 🔧 NEW: Validate prompt data
+  validatePromptData(promptData) {
+    const errors = [];
+
+    if (!promptData.name || promptData.name.trim() === '') {
+      errors.push('Prompt name is required');
+    }
+
+    if (!promptData.prompt || promptData.prompt.trim() === '') {
+      errors.push('Prompt content is required');
+    }
+
+    if (!promptData.category || promptData.category.trim() === '') {
+      errors.push('Prompt category is required');
+    }
+
+    if (!promptData.aiProvider || promptData.aiProvider.trim() === '') {
+      errors.push('AI provider is required');
+    }
+
+    if (promptData.temperature && (promptData.temperature < 0 || promptData.temperature > 2)) {
+      errors.push('Temperature must be between 0 and 2');
+    }
+
+    if (promptData.maxTokens && (promptData.maxTokens < 1 || promptData.maxTokens > 8000)) {
+      errors.push('Max tokens must be between 1 and 8000');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
   }
 }
 
