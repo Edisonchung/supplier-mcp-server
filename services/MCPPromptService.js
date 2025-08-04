@@ -112,7 +112,7 @@ class MCPPromptService {
     documentType: context.documentType,
     user: context.user?.email
   });
-
+  
   const scored = prompts.map(prompt => {
     let score = 0;
     
@@ -131,15 +131,20 @@ class MCPPromptService {
         score += 1000; // Highest priority for exact category match
         console.log(`✅ EXACT category match: ${prompt.name} (+1000)`);
       }
+      // 🚨 NEW: Reject mismatched categories for bank payments
+      else if (promptCategory === 'purchase_order' || promptCategory === 'proforma_invoice') {
+        score = -1000; // Negative score to completely reject wrong document types
+        console.log(`❌ WRONG category for bank payment: ${prompt.name} (-1000) - REJECTED`);
+      }
       
-      // Name-based matching for bank payments
-      if (promptName.includes('bank') || promptName.includes('payment')) {
+      // Name-based matching for bank payments (only if not already rejected)
+      if (score >= 0 && (promptName.includes('bank') || promptName.includes('payment'))) {
         score += 800;
         console.log(`✅ Bank/Payment name match: ${prompt.name} (+800)`);
       }
       
-      // Priority prefix matching (A-, AAA-, etc.)
-      if (prompt.name.match(/^A\s*-/i) || prompt.name.match(/^AAA/i)) {
+      // Priority prefix matching (only if not already rejected)
+      if (score >= 0 && (prompt.name.match(/^A\s*-/i) || prompt.name.match(/^AAA/i))) {
         score += 500;
         console.log(`✅ Priority prefix: ${prompt.name} (+500)`);
       }
@@ -152,34 +157,44 @@ class MCPPromptService {
       
       if (docType.includes('proforma') && promptCategory === 'proforma_invoice') {
         score += 1000;
+        console.log(`✅ Proforma category match: ${prompt.name} (+1000)`);
       } else if (docType.includes('purchase') && promptCategory === 'purchase_order') {
         score += 1000;
+        console.log(`✅ Purchase Order category match: ${prompt.name} (+1000)`);
+      }
+      // 🚨 NEW: Reject wrong categories for other document types too
+      else if (docType.includes('proforma') && (promptCategory === 'purchase_order' || promptCategory === 'bank_payment')) {
+        score = -1000;
+        console.log(`❌ WRONG category for proforma: ${prompt.name} (-1000) - REJECTED`);
+      } else if (docType.includes('purchase') && (promptCategory === 'proforma_invoice' || promptCategory === 'bank_payment')) {
+        score = -1000;
+        console.log(`❌ WRONG category for purchase order: ${prompt.name} (-1000) - REJECTED`);
       }
     }
-
-    // 🏢 Supplier matching (existing logic)
-    if (context.supplier && prompt.suppliers) {
+    
+    // 🏢 Supplier matching (only if not already rejected)
+    if (score >= 0 && context.supplier && prompt.suppliers) {
       if (prompt.suppliers.includes(context.supplier)) {
         score += 200;
       } else if (prompt.suppliers.includes('ALL')) {
         score += 100;
       }
     }
-
-    // 👤 User targeting (existing logic)
-    if (context.user && prompt.targetUsers) {
+    
+    // 👤 User targeting (only if not already rejected)
+    if (score >= 0 && context.user && prompt.targetUsers) {
       if (prompt.targetUsers.includes(context.user.email)) {
         score += 150;
       }
     }
-
-    // 📊 Performance metrics (existing logic)
-    if (prompt.performance) {
+    
+    // 📊 Performance metrics (only if not already rejected)
+    if (score >= 0 && prompt.performance) {
       score += (prompt.performance.accuracy || 0) * 2;
     }
-
-    // 🔄 Version preference (newer versions get slight boost)
-    if (prompt.version) {
+    
+    // 🔄 Version preference (only if not already rejected)
+    if (score >= 0 && prompt.version) {
       const versionMatch = prompt.version.match(/(\d+)\.(\d+)\.(\d+)/);
       if (versionMatch) {
         const major = parseInt(versionMatch[1]);
@@ -187,11 +202,11 @@ class MCPPromptService {
         score += major * 10 + minor;
       }
     }
-
+    
     console.log(`📊 Prompt "${prompt.name}" scored: ${score}`);
     return { ...prompt, _score: score };
   });
-
+  
   // Sort by score (highest first) and return best match
   const sorted = scored.sort((a, b) => b._score - a._score);
   
@@ -199,14 +214,16 @@ class MCPPromptService {
   sorted.slice(0, 3).forEach((prompt, i) => {
     console.log(`   ${i + 1}. ${prompt.name} (score: ${prompt._score})`);
   });
-
+  
   const bestPrompt = sorted[0];
   
+  // 🚨 CRITICAL: Only return prompts with positive scores
   if (bestPrompt && bestPrompt._score > 0) {
     console.log(`✅ Selected: ${bestPrompt.name} with score ${bestPrompt._score}`);
     return bestPrompt;
   } else {
-    console.log('❌ No suitable prompt found (all scores = 0)');
+    console.log(`❌ No suitable prompt found - best score: ${bestPrompt?._score || 'none'}`);
+    console.log('💡 Reason: No category-matched prompts available or all prompts rejected for wrong document type');
     return null;
   }
 }
