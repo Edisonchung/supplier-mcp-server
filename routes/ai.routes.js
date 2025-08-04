@@ -1,4 +1,4 @@
-//routes/ai.routes.js
+//routes/ai.routes.js - UPDATED WITH MISSING ENDPOINTS
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -51,16 +51,28 @@ router.get('/modules/:moduleId', aiController.getModule.bind(aiController));
 // PUT /api/ai/modules/:moduleId - Update module
 router.put('/modules/:moduleId', aiController.updateModule.bind(aiController));
 
-// === Prompt Management ===
+// === Prompt Management (FIXED) ===
 
 // GET /api/ai/prompts - Get all prompts (optionally filtered by moduleId)
 router.get('/prompts', aiController.getAllPrompts.bind(aiController));
 
-// POST /api/ai/prompts - Save/update prompt
+// POST /api/ai/prompts - Create new prompt
 router.post('/prompts', aiController.savePrompt.bind(aiController));
 
-// POST /api/ai/prompts/test - Test a prompt
+// 🔧 FIX: Add PUT route for updating existing prompts
+router.put('/prompts/:id', aiController.updatePrompt.bind(aiController));
+
+// 🔧 FIX: Add DELETE route for deleting prompts  
+router.delete('/prompts/:id', aiController.deletePrompt.bind(aiController));
+
+// POST /api/ai/prompts/test - Test a prompt with data
 router.post('/prompts/test', aiController.testPrompt.bind(aiController));
+
+// 🔧 FIX: Add GET route for individual prompt details
+router.get('/prompts/:id', aiController.getPrompt.bind(aiController));
+
+// 🔧 FIX: Add POST route for testing specific prompt
+router.post('/prompts/:id/test', aiController.testSpecificPrompt.bind(aiController));
 
 // === Document Processing Endpoints ===
 
@@ -135,7 +147,7 @@ router.use((error, req, res, next) => {
   });
 });
 
-// === API Documentation ===
+// === API Documentation (UPDATED) ===
 
 router.get('/docs', (req, res) => {
   res.json({
@@ -154,8 +166,12 @@ router.get('/docs', (req, res) => {
       ],
       prompts: [
         'GET /api/ai/prompts - List all prompts',
-        'POST /api/ai/prompts - Save/update prompt',
-        'POST /api/ai/prompts/test - Test prompt'
+        'GET /api/ai/prompts/:id - Get individual prompt', // 🔧 NEW
+        'POST /api/ai/prompts - Create new prompt',
+        'PUT /api/ai/prompts/:id - Update existing prompt', // 🔧 NEW
+        'DELETE /api/ai/prompts/:id - Delete prompt', // 🔧 NEW
+        'POST /api/ai/prompts/test - Test prompt with data',
+        'POST /api/ai/prompts/:id/test - Test specific prompt' // 🔧 NEW
       ],
       extraction: [
         'POST /api/ai/extract/document - Generic extraction',
@@ -173,14 +189,28 @@ router.get('/docs', (req, res) => {
       'Modular architecture with configurable prompts',
       'Performance tracking and analytics',
       'Automatic fallback between AI providers',
-      'Enhanced document extraction accuracy'
+      'Enhanced document extraction accuracy',
+      'Full CRUD operations for prompt management', // 🔧 NEW
+      'Individual prompt testing and validation' // 🔧 NEW
     ],
     file_support: [
       'PDF documents',
       'Images (JPEG, PNG, TIFF)',
       'Excel files (XLSX, XLS)',
       'Plain text files'
-    ]
+    ],
+    prompt_management: { // 🔧 NEW SECTION
+      crud_operations: {
+        create: 'POST /api/ai/prompts',
+        read: 'GET /api/ai/prompts or GET /api/ai/prompts/:id',
+        update: 'PUT /api/ai/prompts/:id',
+        delete: 'DELETE /api/ai/prompts/:id'
+      },
+      testing: {
+        batch_test: 'POST /api/ai/prompts/test',
+        individual_test: 'POST /api/ai/prompts/:id/test'
+      }
+    }
   });
 });
 
