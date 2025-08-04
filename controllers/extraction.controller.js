@@ -1135,7 +1135,7 @@ exports.extractFromEmail = async (req, res) => {
 
 exports.extractBankPaymentSlip = async (req, res) => {
   try {
-    console.log('🏦 Enhanced Bank Payment Slip extraction request received');
+    console.log('🏦 TRUE MCP Bank Payment Extraction Starting...');
 
     if (!req.file) {
       return res.status(400).json({ 
@@ -1146,17 +1146,23 @@ exports.extractBankPaymentSlip = async (req, res) => {
 
     const startTime = Date.now();
     
-    // 🔍 Get user context for dual system routing
+    // 🔍 Get user context for MCP system routing
     const userEmail = req.headers['x-user-email'] || 
                       req.body.userEmail || 
                       req.body.user_email ||
                       (req.body.user ? JSON.parse(req.body.user).email : null) ||
                       'anonymous';
     
+    const userContext = {
+      email: userEmail,
+      role: req.body.userRole || 'user',
+      uid: req.body.uid || 'anonymous'
+    };
+    
     const isTestUser = userEmail === 'edisonchung@flowsolution.net';
     
     console.log(`👤 Processing bank payment for: ${userEmail}`);
-    console.log(`🧪 MCP Test User: ${isTestUser}`);
+    console.log(`🧪 Is Test User: ${isTestUser}`);
 
     // Extract text from PDF
     const pdfData = await pdfParse(req.file.buffer);
@@ -1167,74 +1173,126 @@ exports.extractBankPaymentSlip = async (req, res) => {
     let aiResponse;
     let systemUsed = 'legacy';
     let promptUsed = 'hardcoded_legacy';
+    let promptMetadata = null;
 
-    // 🚀 DUAL SYSTEM LOGIC - MCP vs Legacy
+    // 🚀 TRUE MCP SYSTEM INTEGRATION
     if (isTestUser) {
       try {
-        console.log('🧠 Using MCP AI System for Edison...');
+        console.log('🚀 Attempting TRUE MCP System Integration...');
         
-        // Initialize Unified AI Service
-        const aiService = new UnifiedAIService();
+        // 🎯 STEP 1: Query MCP Prompt Service for bank payment prompts
+        console.log('📋 Querying MCPPromptService for bank payment prompts...');
         
-        // Use the modular AI system for bank payment extraction
-        const mcpResult = await aiService.extractFromDocument(extractedText, 'bank_payment', {
-          documentType: 'bank_payment_slip',
-          supplier: 'BANK_PAYMENT',
-          filename: req.file.originalname,
-          userEmail: userEmail,
-          enhancedMode: true,
-          fileSize: req.file.size,
-          category: 'bank_payment'
+        const mcpPrompt = await mcpPromptService.getPromptForTask(
+          'document_extraction',  // moduleId
+          'bank_payment',         // category - this should match your prompt category
+          {
+            supplier: 'BANK_PAYMENT',
+            user: userContext,
+            documentType: 'bank_payment_slip',
+            filename: req.file.originalname
+          }
+        );
+
+        console.log('🔍 MCP Prompt Service Response:', {
+          promptFound: !!mcpPrompt,
+          promptName: mcpPrompt?.name,
+          isActive: mcpPrompt?.isActive,
+          category: mcpPrompt?.category
         });
 
-        if (mcpResult.success) {
-          systemUsed = 'mcp';
-          promptUsed = mcpResult.metadata?.prompt || 'mcp_bank_payment_optimized';
-          
-          console.log('✅ MCP extraction successful');
-          console.log('📝 MCP Prompt used:', promptUsed);
-          console.log('⚡ MCP Processing time:', mcpResult.metadata?.processingTime, 'ms');
-          
-          // Transform MCP result to expected format
-          const mcpData = mcpResult.result;
-          aiResponse = {
-            bank_payment: {
-              reference_number: mcpData.bank_payment?.reference_number || mcpData.reference_number,
-              payment_date: mcpData.bank_payment?.payment_date || mcpData.payment_date,
-              payment_amount: mcpData.bank_payment?.payment_amount || mcpData.payment_amount,
-              paid_currency: mcpData.bank_payment?.paid_currency || mcpData.paid_currency || 'USD',
-              debit_amount: mcpData.bank_payment?.debit_amount || mcpData.debit_amount,
-              debit_currency: mcpData.bank_payment?.debit_currency || mcpData.debit_currency || 'MYR',
-              exchange_rate: mcpData.bank_payment?.exchange_rate || mcpData.exchange_rate,
-              bank_name: mcpData.bank_payment?.sender_bank || mcpData.bank_name || 'Hong Leong Bank',
-              account_number: mcpData.bank_payment?.sender_account || mcpData.account_number,
-              account_name: mcpData.bank_payment?.sender_name || mcpData.account_name || 'FLOW SOLUTION SDN BH',
-              beneficiary_name: mcpData.bank_payment?.beneficiary_name || mcpData.beneficiary_name,
-              beneficiary_bank: mcpData.bank_payment?.beneficiary_bank || mcpData.beneficiary_bank,
-              beneficiary_country: mcpData.bank_payment?.beneficiary_country || mcpData.beneficiary_country,
-              payment_details: mcpData.bank_payment?.payment_details || mcpData.payment_details,
-              bank_charges: mcpData.bank_payment?.bank_charges || mcpData.bank_charges || 50.00,
-              status: mcpData.bank_payment?.status || mcpData.status || 'MCP Processed'
-            },
-            confidence: mcpResult.metadata?.confidence || 0.95,
-            document_type: 'bank_payment_slip'
+        if (mcpPrompt && mcpPrompt.isActive !== false) {
+          console.log('✅ MCP Prompt Found:', {
+            name: mcpPrompt.name,
+            id: mcpPrompt.id,
+            category: mcpPrompt.category,
+            version: mcpPrompt.version,
+            aiProvider: mcpPrompt.aiProvider
+          });
+
+          // 🎯 STEP 2: Use the actual MCP prompt for extraction
+          systemUsed = 'mcp_true';
+          promptUsed = mcpPrompt.name;
+          promptMetadata = {
+            promptId: mcpPrompt.id,
+            promptName: mcpPrompt.name,
+            category: mcpPrompt.category,
+            version: mcpPrompt.version,
+            aiProvider: mcpPrompt.aiProvider,
+            temperature: mcpPrompt.temperature,
+            maxTokens: mcpPrompt.maxTokens
           };
+
+          // 🚀 STEP 3: Execute AI extraction with MCP prompt
+          console.log(`🤖 Executing AI extraction with MCP prompt: ${mcpPrompt.name}`);
+          console.log(`🎯 Using AI Provider: ${mcpPrompt.aiProvider || 'deepseek'}`);
+          
+          const aiProvider = mcpPrompt.aiProvider || 'deepseek';
+          const fullPrompt = mcpPrompt.prompt + '\n\nExtract from this bank payment slip text:\n\n' + extractedText;
+
+          // Call the appropriate AI service
+          let aiResult;
+          if (aiProvider === 'deepseek' && deepseek) {
+            const completion = await deepseek.chat.completions.create({
+              model: "deepseek-chat",
+              messages: [
+                { role: "user", content: fullPrompt }
+              ],
+              temperature: mcpPrompt.temperature || 0.1,
+              max_tokens: mcpPrompt.maxTokens || 2500
+            });
+            aiResult = completion.choices[0].message.content.trim();
+          } else if (aiProvider === 'openai' && openai) {
+            const completion = await openai.chat.completions.create({
+              model: 'gpt-4-turbo',
+              messages: [
+                { role: "user", content: fullPrompt }
+              ],
+              temperature: mcpPrompt.temperature || 0.1,
+              max_tokens: mcpPrompt.maxTokens || 2500
+            });
+            aiResult = completion.choices[0].message.content.trim();
+          } else {
+            throw new Error(`AI provider ${aiProvider} not available or not configured`);
+          }
+
+          // Parse AI response
+          console.log('🤖 Raw AI Response (first 200 chars):', aiResult.substring(0, 200) + '...');
+          
+          const cleanedResponse = aiResult
+            .replace(/```json/g, '')
+            .replace(/```/g, '')
+            .trim();
+
+          aiResponse = JSON.parse(cleanedResponse);
+          
+          console.log('✅ TRUE MCP Extraction Successful!');
+          console.log('📊 Using dynamic prompt from UI:', mcpPrompt.name);
+          console.log('💰 Extracted amounts:', {
+            payment: aiResponse.bank_payment?.payment_amount,
+            debit: aiResponse.bank_payment?.debit_amount,
+            rate: aiResponse.bank_payment?.exchange_rate
+          });
           
         } else {
-          throw new Error('MCP extraction failed: ' + (mcpResult.error || 'Unknown error'));
+          console.log('❌ No active MCP prompt found for bank_payment category');
+          console.log('🔍 Available categories in system:', 'Run GET /api/ai/prompts to see all');
+          console.log('🔄 Falling back to legacy system...');
+          throw new Error('No MCP prompt available - falling back to legacy');
         }
         
       } catch (mcpError) {
-        console.error('❌ MCP extraction failed, falling back to legacy:', mcpError.message);
+        console.error('❌ TRUE MCP extraction failed:', mcpError.message);
+        console.log('🔄 Falling back to enhanced legacy system...');
         // Fall through to legacy system
       }
     }
 
-    // 🔄 LEGACY SYSTEM FALLBACK (Enhanced with Fixed Logic)
+    // 🔄 LEGACY SYSTEM FALLBACK (Only if MCP fails or user not in test group)
     if (systemUsed === 'legacy') {
-      console.log('🔧 Using Enhanced Legacy AI System...');
+      console.log('🔧 Using Enhanced Legacy System (hardcoded prompts)...');
       
-      // Enhanced legacy prompt with FIXED amount logic
+      // Your existing hardcoded prompt logic
       const enhancedLegacyPrompt = `
 You are an expert at extracting structured data from Hong Leong Bank payment slips.
 
@@ -1295,70 +1353,29 @@ CRITICAL:
 Return ONLY the JSON object, no explanations or markdown.
       `;
 
-      // Call AI service (DeepSeek)
-      try {
-        if (deepseek) {
-          const completion = await deepseek.chat.completions.create({
-            model: "deepseek-chat",
-            messages: [
-              {
-                role: "user", 
-                content: enhancedLegacyPrompt
-              }
-            ],
-            temperature: 0.1,
-            max_tokens: 2500
-          });
+      // Call AI service with hardcoded prompt
+      if (deepseek) {
+        const completion = await deepseek.chat.completions.create({
+          model: "deepseek-chat",
+          messages: [{ role: "user", content: enhancedLegacyPrompt }],
+          temperature: 0.1,
+          max_tokens: 2500
+        });
 
-          const aiResult = completion.choices[0].message.content.trim();
-          console.log('🤖 Enhanced Legacy AI Raw Response:', aiResult.substring(0, 200) + '...');
-
-          // Parse AI response
-          const cleanedResponse = aiResult
-            .replace(/```json/g, '')
-            .replace(/```/g, '')
-            .trim();
-
-          aiResponse = JSON.parse(cleanedResponse);
-          promptUsed = 'enhanced_legacy_fixed_amounts_v2';
-          systemUsed = isTestUser ? 'mcp_enhanced_legacy' : 'legacy_enhanced';          
-          
-          console.log('✅ Enhanced Legacy AI Parsed Response');
-          console.log('💰 Payment Amount (USD):', aiResponse.bank_payment?.payment_amount);
-          console.log('💸 Debit Amount (MYR):', aiResponse.bank_payment?.debit_amount);
-          console.log('💱 Exchange Rate:', aiResponse.bank_payment?.exchange_rate);
-
-        } else {
-          throw new Error('DeepSeek API not configured');
-        }
-      } catch (aiError) {
-        console.error('❌ Enhanced Legacy AI extraction failed:', aiError);
+        const aiResult = completion.choices[0].message.content.trim();
+        const cleanedResponse = aiResult.replace(/```json/g, '').replace(/```/g, '').trim();
+        aiResponse = JSON.parse(cleanedResponse);
         
-        // Ultimate fallback with better error handling
-        aiResponse = {
-          bank_payment: {
-            reference_number: `EXTRACTION_FAILED_${Date.now()}`,
-            payment_date: new Date().toISOString().split('T')[0],
-            payment_amount: null,
-            paid_currency: 'USD',
-            debit_amount: null,
-            debit_currency: 'MYR',
-            exchange_rate: null,
-            bank_name: 'Hong Leong Bank',
-            account_name: 'FLOW SOLUTION SDN BH',
-            status: 'Extraction Failed - Please verify manually'
-          },
-          confidence: 0.1,
-          document_type: 'bank_payment_slip'
-        };
-        promptUsed = 'fallback_error_handler';
-        systemUsed = 'fallback';
+        systemUsed = isTestUser ? 'legacy_enhanced_fallback' : 'legacy_enhanced';
+        promptUsed = 'hardcoded_legacy_v2';
+        
+        console.log('✅ Legacy system extraction completed');
       }
     }
 
     const extractionTime = Date.now() - startTime;
 
-    // 🎯 Enhanced response with comprehensive dual system metadata
+    // 🎯 TRUE SYSTEM REPORTING
     const response = {
       success: true,
       data: aiResponse,
@@ -1366,19 +1383,28 @@ Return ONLY the JSON object, no explanations or markdown.
       metadata: {
         file_name: req.file.originalname,
         file_size: req.file.size,
-        extraction_method: aiResponse.confidence > 0.8 ? 'ai_extraction' : 'pattern_fallback',
+        extraction_method: 'ai_extraction',
         processed_at: new Date().toISOString(),
         
-        // 🚀 DUAL SYSTEM METADATA
-        system_used: isTestUser ? 'mcp_enhanced' : 'legacy', 
-        system_status: isTestUser ? 'MCP system active for test user' : 'Legacy system for standard user', 
-        prompt_used: promptUsed,
+        // 🚀 TRUE MCP METADATA
+        system_used: systemUsed,  // Will be 'mcp_true', 'legacy_enhanced_fallback', or 'legacy_enhanced'
+        prompt_used: promptUsed,  // Actual prompt name from UI or 'hardcoded_legacy_v2'
         user_email: userEmail,
         is_test_user: isTestUser,
-        dual_system_active: true,
-        mcp_available: true,
         
-        // 💰 AMOUNT VALIDATION METADATA
+        // 🎯 MCP-specific metadata (only if MCP was actually used)
+        ...(promptMetadata ? {
+          mcp_prompt_id: promptMetadata.promptId,
+          mcp_prompt_name: promptMetadata.promptName,
+          mcp_prompt_category: promptMetadata.category,
+          mcp_prompt_version: promptMetadata.version,
+          mcp_ai_provider: promptMetadata.aiProvider,
+          mcp_status: 'active_prompt_used_successfully'
+        } : {
+          mcp_status: isTestUser ? 'no_active_prompts_found_in_category' : 'user_not_in_test_group'
+        }),
+        
+        // Amount validation
         amount_validation: {
           payment_amount: aiResponse.bank_payment?.payment_amount,
           debit_amount: aiResponse.bank_payment?.debit_amount,
@@ -1389,54 +1415,39 @@ Return ONLY the JSON object, no explanations or markdown.
       }
     };
 
-    console.log(`✅ Bank payment extraction completed via ${systemUsed} system`);
-    console.log(`📊 Confidence: ${aiResponse.confidence}, Processing time: ${extractionTime}ms`);
-    
-    // 🔍 Log validation results for debugging
-    if (response.metadata.amount_validation.amounts_logical) {
-      console.log('✅ Amount logic validation passed');
+    // 🚀 CLEAR SYSTEM STATUS LOGGING
+    if (systemUsed === 'mcp_true') {
+      console.log('🎉 TRUE MCP SYSTEM SUCCESS: Using actual prompt from Prompt Management UI!');
+      console.log('📝 MCP Details:', {
+        prompt_name: promptMetadata.promptName,
+        prompt_id: promptMetadata.promptId,
+        prompt_category: promptMetadata.category,
+        ai_provider: promptMetadata.aiProvider,
+        processing_time: `${extractionTime}ms`,
+        status: 'Fully integrated MCP system operational'
+      });
+    } else if (systemUsed.includes('legacy_enhanced')) {
+      console.log('🔧 Enhanced Legacy System: Using hardcoded prompts (MCP fallback)');
+      console.log('💡 Reason: No active MCP prompts found in bank_payment category');
     } else {
-      console.log('⚠️ Amount logic validation failed - amounts may be reversed');
+      console.log('🔧 Basic Legacy System: Standard processing');
     }
-
-    // 🚀 CLEAR SYSTEM STATUS LOGGING (NEW)
-if (isTestUser) {
-  console.log('🚀 MCP SYSTEM ACTIVE: Enhanced prompts working correctly for test user');
-  console.log('📝 System Details:', {
-    user: userEmail,
-    system: 'MCP Enhanced',
-    prompt_quality: 'Advanced',
-    processing_time: `${extractionTime}ms`
-  });
-} else {
-  console.log('🔧 Legacy System Active: Standard prompts for regular user');
-}
     
     res.json(response);
 
   } catch (error) {
-    console.error('❌ Bank payment slip extraction error:', error);
+    console.error('❌ Bank payment extraction error:', error);
     
-    const extractionTime = Date.now() - (Date.now() - 1000); // Approximate
-    
-    const response = {
+    res.status(500).json({
       success: false,
       message: error.message || 'Failed to extract bank payment data',
       metadata: {
         system_used: 'error',
         user_email: req.headers['x-user-email'] || 'unknown',
         is_test_user: false,
-        dual_system_active: true,
         processed_at: new Date().toISOString(),
-        processing_time: extractionTime,
         error_type: error.name || 'UnknownError'
       }
-    };
-    
-    if (process.env.NODE_ENV === 'development') {
-      response.error = error.stack;
-    }
-    
-    res.status(500).json(response);
+    });
   }
 };
