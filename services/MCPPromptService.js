@@ -107,61 +107,102 @@ class MCPPromptService {
    * Select the best prompt based on context
    */
   selectBestPrompt(prompts, context) {
+    console.log(`🎯 Selecting best prompt from ${prompts.length} candidates for context:`, {
+      supplier: context.supplier,
+      documentType: context.documentType,
+      user: context.user?.email
+    });
+
     const scored = prompts.map(prompt => {
       let score = 0;
       
-      // 1. Supplier matching (highest priority)
+      // 🎯 FIX 1: Category matching (highest priority for bank payments)
+      if (context.documentType) {
+        const docType = context.documentType.toLowerCase();
+        const promptCategory = prompt.category?.toLowerCase();
+        
+        // Direct category match gets highest score
+        if ((docType.includes('bank') || docType.includes('payment')) && promptCategory === 'bank_payment') {
+          score += 200; // Highest priority for bank payment docs
+          console.log(`✅ Bank payment category match: ${prompt.name} (+200)`);
+        } else if (docType.includes('proforma') && promptCategory === 'proforma_invoice') {
+          score += 200;
+        } else if (docType.includes('purchase') && promptCategory === 'purchase_order') {
+          score += 200;
+        }
+        
+        // Name-based matching as secondary
+        const nameMatch = prompt.name.toLowerCase();
+        if ((docType.includes('bank') || docType.includes('payment')) && 
+            (nameMatch.includes('bank') || nameMatch.includes('payment'))) {
+          score += 150;
+          console.log(`✅ Bank payment name match: ${prompt.name} (+150)`);
+        }
+      }
+      
+      // 🎯 FIX 2: Alphabetical priority (A-, AAA- prefixes)
+      if (prompt.name.startsWith('A ') || prompt.name.startsWith('AAA')) {
+        score += 100;
+        console.log(`✅ Priority prefix match: ${prompt.name} (+100)`);
+      }
+
+      // 1. Supplier matching (existing logic)
       if (context.supplier && prompt.suppliers) {
         if (prompt.suppliers.includes(context.supplier)) {
-          score += 100; // Exact supplier match
+          score += 80; // Reduced from 100 to prioritize category matching
         } else if (prompt.suppliers.includes('ALL')) {
-          score += 50; // Universal prompt
-        } else {
-          score += 0; // No match
+          score += 40; // Reduced from 50
         }
       } else if (prompt.suppliers && prompt.suppliers.includes('ALL')) {
-        score += 50; // Universal fallback
+        score += 40;
       }
 
-      // 2. User targeting
+      // 2. User targeting (existing logic)
       if (context.user && prompt.targetUsers) {
         if (prompt.targetUsers.includes(context.user.email)) {
-          score += 80; // User-specific prompt
+          score += 60; // Reduced from 80
         }
       }
 
-      // 3. Role targeting
+      // 3. Role targeting (existing logic)
       if (context.user && prompt.targetRoles) {
         if (prompt.targetRoles.includes(context.user.role)) {
-          score += 60; // Role-specific prompt
+          score += 50; // Reduced from 60
         }
       }
 
-      // 4. Performance metrics
+      // 4. Performance metrics (existing logic)
       if (prompt.performance) {
-        score += (prompt.performance.accuracy || 0) * 0.5; // Convert percentage to points
+        score += (prompt.performance.accuracy || 0) * 0.3; // Reduced multiplier
       }
 
-      // 5. Version recency (newer versions get slight boost)
+      // 5. Version recency (existing logic)
       if (prompt.version) {
         const versionBoost = this.getVersionScore(prompt.version);
-        score += versionBoost;
+        score += versionBoost * 0.1; // Reduced impact
       }
 
-      // 6. Active status
+      // 6. Active status (existing logic)
       if (prompt.isActive) {
         score += 10;
       }
 
+      console.log(`📊 Prompt "${prompt.name}": category=${prompt.category}, score=${score}`);
       return { ...prompt, _score: score };
     });
 
     // Sort by score (descending) and return the best
     scored.sort((a, b) => b._score - a._score);
     
-    // Only return prompts with reasonable scores
+    // 🎯 FIX 3: Lower minimum score threshold for more permissive matching
     const bestPrompt = scored[0];
-    return bestPrompt && bestPrompt._score > 10 ? bestPrompt : null;
+    if (bestPrompt && bestPrompt._score > 5) { // Reduced from 10 to 5
+      console.log(`🏆 Selected prompt: "${bestPrompt.name}" with score ${bestPrompt._score}`);
+      return bestPrompt;
+    } else {
+      console.log(`❌ No prompt met minimum score threshold. Best was: "${bestPrompt?.name}" with score ${bestPrompt?._score}`);
+      return null;
+    }
   }
 
   /**
