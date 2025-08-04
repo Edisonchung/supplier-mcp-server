@@ -1,4 +1,4 @@
-//services/ai/UnifiedAIService.js
+//services/ai/UnifiedAIService.js - UPDATED WITH MISSING METHODS
 const AIModuleManager = require('./AIModuleManager');
 const PromptManager = require('./PromptManager');
 const AIProviderManager = require('./AIProviderManager');
@@ -309,6 +309,26 @@ class UnifiedAIService extends EventEmitter {
     return this.promptManager.getAllPrompts();
   }
 
+  // 🔧 NEW: Get individual prompt
+  async getPrompt(promptId) {
+    await this.initPromise;
+    
+    try {
+      const prompt = await this.promptManager.getPrompt(promptId);
+      
+      if (prompt) {
+        console.log(`✅ Retrieved prompt: ${promptId}`);
+      } else {
+        console.log(`⚠️ Prompt not found: ${promptId}`);
+      }
+      
+      return prompt;
+    } catch (error) {
+      console.error(`❌ Failed to get prompt ${promptId}:`, error.message);
+      throw error;
+    }
+  }
+
   async savePrompt(promptData) {
     await this.initPromise;
     const result = await this.promptManager.savePrompt(promptData);
@@ -322,23 +342,110 @@ class UnifiedAIService extends EventEmitter {
     return result;
   }
 
+  // 🔧 NEW: Update existing prompt
+  async updatePrompt(promptId, promptData) {
+    await this.initPromise;
+    
+    try {
+      const result = await this.promptManager.updatePrompt(promptId, promptData);
+      
+      // Emit prompt update event
+      this.emit('prompt_updated', {
+        promptId,
+        promptData,
+        timestamp: new Date().toISOString()
+      });
+      
+      console.log(`✅ Prompt updated: ${promptId}`);
+      return result;
+    } catch (error) {
+      console.error(`❌ Failed to update prompt ${promptId}:`, error.message);
+      throw error;
+    }
+  }
+
+  // 🔧 NEW: Delete prompt
+  async deletePrompt(promptId) {
+    await this.initPromise;
+    
+    try {
+      const result = await this.promptManager.deletePrompt(promptId);
+      
+      // Emit prompt delete event
+      this.emit('prompt_deleted', {
+        promptId,
+        timestamp: new Date().toISOString()
+      });
+      
+      console.log(`✅ Prompt deleted: ${promptId}`);
+      return result;
+    } catch (error) {
+      console.error(`❌ Failed to delete prompt ${promptId}:`, error.message);
+      throw error;
+    }
+  }
+
   async testPrompt(promptId, testData) {
     await this.initPromise;
-    const result = await this.promptManager.testPrompt(promptId, testData);
     
-    // Emit prompt test event
-    this.emit('prompt_tested', {
-      promptId,
-      testData,
-      result,
-      timestamp: new Date().toISOString()
-    });
-    
-    return result;
+    try {
+      // Get the prompt first
+      const prompt = await this.promptManager.getPrompt(promptId);
+      if (!prompt) {
+        throw new Error(`Prompt not found: ${promptId}`);
+      }
+
+      // Test the prompt with the provided data
+      const result = await this.processTask('test', testData, {
+        promptId,
+        prompt: prompt.prompt,
+        aiProvider: prompt.aiProvider || 'deepseek',
+        temperature: prompt.temperature || 0.1,
+        maxTokens: prompt.maxTokens || 2500
+      });
+
+      // Emit prompt test event
+      this.emit('prompt_tested', {
+        promptId,
+        testData,
+        result,
+        timestamp: new Date().toISOString()
+      });
+
+      return result;
+    } catch (error) {
+      console.error(`❌ Failed to test prompt ${promptId}:`, error.message);
+      throw error;
+    }
   }
 
   async getProviderStatus() {
     return this.providerManager.getProviderStatus();
+  }
+
+  // 🔧 NEW: Extract document wrapper for new API
+  async extractDocument(file, documentType) {
+    // For now, return a mock response until you integrate with your existing extraction logic
+    return {
+      success: true,
+      result: {
+        document_type: documentType,
+        confidence: 0.95,
+        extraction_data: {
+          message: `Mock extraction result for ${documentType} from file: ${file.originalname}`,
+          file: file.originalname,
+          size: file.size,
+          type: file.mimetype
+        }
+      },
+      metadata: {
+        file: file.originalname,
+        size: file.size,
+        processingTime: 1500,
+        provider: 'unified_ai_service',
+        version: '2.0.0-modular'
+      }
+    };
   }
 
   // Comprehensive health check
@@ -465,6 +572,8 @@ class UnifiedAIService extends EventEmitter {
       'performance_update',
       'module_updated',
       'prompt_saved',
+      'prompt_updated', // 🔧 NEW
+      'prompt_deleted', // 🔧 NEW
       'prompt_tested',
       'health_check',
       'quick_test_complete',
