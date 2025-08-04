@@ -1,4 +1,4 @@
-//controllers/ai/ModularAIController.js
+//controllers/ai/ModularAIController.js - UPDATED WITH MISSING METHODS
 const UnifiedAIService = require('../../services/ai/UnifiedAIService');
 
 class ModularAIController {
@@ -134,7 +134,7 @@ class ModularAIController {
     }
   }
 
-  // Prompt management endpoints
+  // Prompt management endpoints (UPDATED WITH MISSING METHODS)
   async getAllPrompts(req, res) {
     try {
       const { moduleId } = req.query;
@@ -146,6 +146,32 @@ class ModularAIController {
         count: prompts.length
       });
     } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+
+  // 🔧 NEW: Get individual prompt
+  async getPrompt(req, res) {
+    try {
+      const { id } = req.params;
+      const prompt = await this.aiService.getPrompt(id);
+      
+      if (!prompt) {
+        return res.status(404).json({
+          success: false,
+          error: 'Prompt not found'
+        });
+      }
+
+      res.json({
+        success: true,
+        data: prompt
+      });
+    } catch (error) {
+      console.error('Error getting prompt:', error);
       res.status(500).json({
         success: false,
         error: error.message
@@ -177,6 +203,65 @@ class ModularAIController {
     }
   }
 
+  // 🔧 NEW: Update existing prompt
+  async updatePrompt(req, res) {
+    try {
+      const { id } = req.params;
+      const promptData = req.body;
+      
+      // Ensure the ID matches
+      promptData.id = id;
+      
+      const success = await this.aiService.updatePrompt(id, promptData);
+      
+      if (success) {
+        res.json({
+          success: true,
+          message: 'Prompt updated successfully',
+          data: promptData
+        });
+      } else {
+        res.status(404).json({
+          success: false,
+          error: 'Prompt not found'
+        });
+      }
+    } catch (error) {
+      console.error('Error updating prompt:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+
+  // 🔧 NEW: Delete prompt
+  async deletePrompt(req, res) {
+    try {
+      const { id } = req.params;
+      
+      const success = await this.aiService.deletePrompt(id);
+      
+      if (success) {
+        res.json({
+          success: true,
+          message: 'Prompt deleted successfully'
+        });
+      } else {
+        res.status(404).json({
+          success: false,
+          error: 'Prompt not found'
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting prompt:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+
   async testPrompt(req, res) {
     try {
       const { promptId, testData } = req.body;
@@ -187,6 +272,28 @@ class ModularAIController {
         data: result
       });
     } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+
+  // 🔧 NEW: Test specific prompt
+  async testSpecificPrompt(req, res) {
+    try {
+      const { id } = req.params;
+      const { testData } = req.body;
+      
+      const result = await this.aiService.testPrompt(id, testData);
+      
+      res.json({
+        success: true,
+        data: result,
+        promptId: id
+      });
+    } catch (error) {
+      console.error('Error testing specific prompt:', error);
       res.status(500).json({
         success: false,
         error: error.message
