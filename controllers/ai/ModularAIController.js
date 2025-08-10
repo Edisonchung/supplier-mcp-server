@@ -1,4 +1,4 @@
-//controllers/ai/ModularAIController.js - UPDATED WITH MISSING METHODS
+//controllers/ai/ModularAIController.js - UPDATED WITH FIREBASE INTEGRATION FIXES
 const UnifiedAIService = require('../../services/ai/UnifiedAIService');
 
 class ModularAIController {
@@ -134,28 +134,45 @@ class ModularAIController {
     }
   }
 
-  // Prompt management endpoints (UPDATED WITH MISSING METHODS)
+  // 🔧 UPDATED: Prompt management endpoints with Firebase integration
   async getAllPrompts(req, res) {
     try {
+      // Wait for AI service initialization
+      await this.aiService.initPromise;
+      
       const { moduleId } = req.query;
-      const prompts = await this.aiService.getPrompts(moduleId);
+      let prompts;
+      
+      if (moduleId) {
+        prompts = await this.aiService.getPromptsByModule(moduleId);
+      } else {
+        prompts = await this.aiService.getPrompts();
+      }
+      
+      // Ensure prompts is always an array
+      const promptsArray = Array.isArray(prompts) ? prompts : [];
       
       res.json({
         success: true,
-        data: prompts,
-        count: prompts.length
+        data: promptsArray,
+        count: promptsArray.length
       });
     } catch (error) {
+      console.error('Error getting prompts:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: error.message,
+        data: [], // Ensure data is always present
+        count: 0
       });
     }
   }
 
-  // 🔧 NEW: Get individual prompt
+  // 🔧 UPDATED: Get individual prompt with better error handling
   async getPrompt(req, res) {
     try {
+      await this.aiService.initPromise;
+      
       const { id } = req.params;
       const prompt = await this.aiService.getPrompt(id);
       
@@ -179,38 +196,62 @@ class ModularAIController {
     }
   }
 
+  // 🔧 UPDATED: Save prompt with validation and Firebase integration
   async savePrompt(req, res) {
     try {
+      await this.aiService.initPromise;
+      
       const promptData = req.body;
+      
+      // Enhanced validation
+      if (!promptData.name || !promptData.prompt) {
+        return res.status(400).json({
+          success: false,
+          error: 'Name and prompt content are required'
+        });
+      }
+
+      // Add metadata for new prompts
+      if (!promptData.id) {
+        promptData.createdAt = new Date().toISOString();
+        promptData.version = promptData.version || '1.0.0';
+      }
+      promptData.lastModified = new Date().toISOString();
+
       const success = await this.aiService.savePrompt(promptData);
       
       if (success) {
         res.json({
           success: true,
-          message: 'Prompt saved successfully'
+          message: 'Prompt saved successfully',
+          data: promptData
         });
       } else {
         res.status(500).json({
           success: false,
-          error: 'Failed to save prompt'
+          error: 'Failed to save prompt to Firebase storage'
         });
       }
     } catch (error) {
+      console.error('Error saving prompt:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: `Save failed: ${error.message}`
       });
     }
   }
 
-  // 🔧 NEW: Update existing prompt
+  // 🔧 UPDATED: Update existing prompt with Firebase integration
   async updatePrompt(req, res) {
     try {
+      await this.aiService.initPromise;
+      
       const { id } = req.params;
       const promptData = req.body;
       
-      // Ensure the ID matches
+      // Ensure the ID matches and add metadata
       promptData.id = id;
+      promptData.lastModified = new Date().toISOString();
       
       const success = await this.aiService.updatePrompt(id, promptData);
       
@@ -223,21 +264,23 @@ class ModularAIController {
       } else {
         res.status(404).json({
           success: false,
-          error: 'Prompt not found'
+          error: 'Prompt not found or update failed'
         });
       }
     } catch (error) {
       console.error('Error updating prompt:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: `Update failed: ${error.message}`
       });
     }
   }
 
-  // 🔧 NEW: Delete prompt
+  // 🔧 UPDATED: Delete prompt with Firebase integration
   async deletePrompt(req, res) {
     try {
+      await this.aiService.initPromise;
+      
       const { id } = req.params;
       
       const success = await this.aiService.deletePrompt(id);
@@ -257,14 +300,25 @@ class ModularAIController {
       console.error('Error deleting prompt:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: `Delete failed: ${error.message}`
       });
     }
   }
 
+  // 🔧 UPDATED: Test prompt with better error handling
   async testPrompt(req, res) {
     try {
+      await this.aiService.initPromise;
+      
       const { promptId, testData } = req.body;
+      
+      if (!promptId || !testData) {
+        return res.status(400).json({
+          success: false,
+          error: 'promptId and testData are required'
+        });
+      }
+      
       const result = await this.aiService.testPrompt(promptId, testData);
       
       res.json({
@@ -272,18 +326,28 @@ class ModularAIController {
         data: result
       });
     } catch (error) {
+      console.error('Error testing prompt:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: `Test failed: ${error.message}`
       });
     }
   }
 
-  // 🔧 NEW: Test specific prompt
+  // 🔧 UPDATED: Test specific prompt
   async testSpecificPrompt(req, res) {
     try {
+      await this.aiService.initPromise;
+      
       const { id } = req.params;
       const { testData } = req.body;
+      
+      if (!testData) {
+        return res.status(400).json({
+          success: false,
+          error: 'testData is required'
+        });
+      }
       
       const result = await this.aiService.testPrompt(id, testData);
       
@@ -296,7 +360,7 @@ class ModularAIController {
       console.error('Error testing specific prompt:', error);
       res.status(500).json({
         success: false,
-        error: error.message
+        error: `Test failed: ${error.message}`
       });
     }
   }
