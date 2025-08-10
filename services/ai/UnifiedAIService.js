@@ -1,4 +1,4 @@
-//services/ai/UnifiedAIService.js - UPDATED WITH FIREBASE INTEGRATION
+//services/ai/UnifiedAIService.js - Enhanced for Product Enhancement
 const AIModuleManager = require('./AIModuleManager');
 const PromptManager = require('./PromptManager');
 const AIProviderManager = require('./AIProviderManager');
@@ -18,7 +18,7 @@ class UnifiedAIService extends EventEmitter {
   async initialize() {
     try {
       // Wait for PromptManager to fully initialize (especially Firebase)
-      console.log('🔄 Initializing UnifiedAIService...');
+      console.log('🔄 Initializing HiggsFlow UnifiedAIService for product enhancement...');
       
       // Give PromptManager time to load from Firebase
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -26,18 +26,129 @@ class UnifiedAIService extends EventEmitter {
       // Verify PromptManager has loaded prompts
       const prompts = this.promptManager.getAllPrompts();
       console.log(`✅ HiggsFlow Unified AI Service initialized with ${prompts.length} prompts`);
+      console.log(`🎯 AI Providers available: ${this.providerManager.getAvailableProviders().join(', ')}`);
       
       // Emit initialization complete event
       this.emit('initialized', {
         timestamp: new Date().toISOString(),
-        version: '2.0.1-firebase-enhanced',
-        promptsLoaded: prompts.length
+        version: '2.1.0-product-enhancement',
+        promptsLoaded: prompts.length,
+        providersAvailable: this.providerManager.getAvailableProviders().length
       });
       
       return true;
     } catch (error) {
       console.error('❌ Unified AI Service initialization failed:', error);
       this.emit('error', error);
+      throw error;
+    }
+  }
+
+  // ✅ NEW: Direct AI call method for product enhancement
+  async callAI(provider, prompt, options = {}) {
+    await this.initPromise;
+    
+    console.log(`🚀 UnifiedAIService: Calling ${provider} for product enhancement`);
+    
+    try {
+      // Use the AIProviderManager to make the call
+      const result = await this.providerManager.callAI(provider, prompt, options);
+      
+      console.log(`✅ UnifiedAIService: ${provider} call successful`);
+      
+      // Emit AI call event
+      this.emit('ai_call_complete', {
+        provider,
+        success: true,
+        timestamp: new Date().toISOString(),
+        responseLength: JSON.stringify(result).length
+      });
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ UnifiedAIService: ${provider} call failed:`, error.message);
+      
+      // Emit AI call error event
+      this.emit('ai_call_error', {
+        provider,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+      
+      throw error;
+    }
+  }
+
+  // ✅ NEW: Enhanced product enhancement method
+  async enhanceProduct(productData, promptTemplate, options = {}) {
+    await this.initPromise;
+    
+    console.log('🔧 UnifiedAIService: Starting product enhancement...');
+    const startTime = Date.now();
+    
+    try {
+      // Replace template variables in prompt
+      let processedPrompt = promptTemplate;
+      const templateData = {
+        partNumber: productData.partNumber || '',
+        productName: productData.name || '',
+        brand: productData.brand || '',
+        description: productData.description || '',
+        category: productData.category || ''
+      };
+      
+      Object.keys(templateData).forEach(key => {
+        const placeholder = `{{${key}}}`;
+        processedPrompt = processedPrompt.replace(new RegExp(placeholder, 'g'), templateData[key]);
+      });
+      
+      console.log(`📝 Template variables replaced for part: ${productData.partNumber}`);
+      
+      // Call AI with the processed prompt
+      const aiProvider = options.aiProvider || 'deepseek';
+      const result = await this.callAI(aiProvider, processedPrompt, {
+        temperature: options.temperature || 0.1,
+        maxTokens: options.maxTokens || 2500,
+        timeout: options.timeout || 30000
+      });
+      
+      const processingTime = Date.now() - startTime;
+      
+      console.log(`✅ Product enhancement complete in ${processingTime}ms`);
+      
+      // Emit product enhancement event
+      this.emit('product_enhancement_complete', {
+        partNumber: productData.partNumber,
+        provider: aiProvider,
+        processingTime,
+        success: true,
+        timestamp: new Date().toISOString()
+      });
+      
+      return {
+        success: true,
+        result,
+        metadata: {
+          processingTime,
+          provider: aiProvider,
+          method: 'unified_ai_enhancement',
+          partNumber: productData.partNumber,
+          templateUsed: true
+        }
+      };
+      
+    } catch (error) {
+      const processingTime = Date.now() - startTime;
+      console.error(`❌ Product enhancement failed after ${processingTime}ms:`, error.message);
+      
+      // Emit product enhancement error event
+      this.emit('product_enhancement_error', {
+        partNumber: productData.partNumber,
+        error: error.message,
+        processingTime,
+        timestamp: new Date().toISOString()
+      });
+      
       throw error;
     }
   }
@@ -76,9 +187,9 @@ class UnifiedAIService extends EventEmitter {
       // 3. Build full prompt with context
       const fullPrompt = this.buildFullPrompt(prompt.prompt, data, context);
 
-      // 4. Call AI provider
+      // 4. Call AI provider using the new callAI method
       const aiProvider = prompt.aiProvider || 'deepseek';
-      const result = await this.providerManager.callAI(aiProvider, fullPrompt, {
+      const result = await this.callAI(aiProvider, fullPrompt, {
         temperature: prompt.temperature || 0.1,
         maxTokens: prompt.maxTokens || 2000
       });
@@ -139,7 +250,7 @@ class UnifiedAIService extends EventEmitter {
           provider: aiProvider,
           processingTime,
           confidence,
-          version: '2.0.1-firebase-enhanced',
+          version: '2.1.0-product-enhancement',
           supplier: context.supplier || 'unknown',
           documentType: context.documentType || 'unknown'
         }
@@ -171,7 +282,7 @@ class UnifiedAIService extends EventEmitter {
           processingTime,
           taskType,
           context,
-          version: '2.0.1-firebase-enhanced'
+          version: '2.1.0-product-enhancement'
         }
       };
     }
@@ -217,6 +328,9 @@ class UnifiedAIService extends EventEmitter {
     // Check for HiggsFlow-specific structures
     if (result.purchase_order || result.proforma_invoice) confidence += 0.3;
     
+    // Check for product enhancement structures
+    if (result.detected_brand || result.enhanced_name) confidence += 0.2;
+    
     // Check for required fields
     const hasRequiredFields = Object.keys(result).length > 0;
     if (hasRequiredFields) confidence += 0.1;
@@ -229,6 +343,11 @@ class UnifiedAIService extends EventEmitter {
     const hasSupplier = result.purchase_order?.supplier || result.proforma_invoice?.supplier;
     if (hasSupplier) confidence += 0.1;
 
+    // Check for product enhancement confidence scores
+    if (result.brand_confidence || result.category_confidence) {
+      confidence = Math.max(confidence, (result.brand_confidence + result.category_confidence) / 2);
+    }
+
     return Math.min(confidence, 0.98); // Cap at 98%
   }
 
@@ -239,7 +358,7 @@ class UnifiedAIService extends EventEmitter {
       moduleId,
       promptId,
       ...metrics,
-      system: 'higgsflow-modular-ai'
+      system: 'higgsflow-unified-ai'
     };
     
     console.log(`📊 HiggsFlow Performance:`, performanceData);
@@ -324,7 +443,9 @@ class UnifiedAIService extends EventEmitter {
       }
       
       // Ensure prompts is always an array
-      return Array.isArray(prompts) ? prompts : [];
+      const result = Array.isArray(prompts) ? prompts : [];
+      console.log(`📋 Retrieved ${result.length} prompts${moduleId ? ` for module ${moduleId}` : ''}`);
+      return result;
     } catch (error) {
       console.error('❌ Error getting prompts:', error);
       return [];
@@ -337,7 +458,9 @@ class UnifiedAIService extends EventEmitter {
     
     try {
       const prompts = this.promptManager.getPromptsByModule(moduleId);
-      return Array.isArray(prompts) ? prompts : [];
+      const result = Array.isArray(prompts) ? prompts : [];
+      console.log(`📋 Retrieved ${result.length} prompts for module ${moduleId}`);
+      return result;
     } catch (error) {
       console.error(`❌ Error getting prompts for module ${moduleId}:`, error);
       return [];
@@ -473,7 +596,18 @@ class UnifiedAIService extends EventEmitter {
   }
 
   async getProviderStatus() {
+    await this.initPromise;
     return this.providerManager.getProviderStatus();
+  }
+
+  // ✅ NEW: Check if AI providers are available
+  isAIAvailable() {
+    return this.providerManager.hasProviders();
+  }
+
+  // ✅ NEW: Get best performing AI provider
+  getBestProvider() {
+    return this.providerManager.getBestProvider();
   }
 
   // 🔧 UPDATED: Extract document wrapper for new API
@@ -496,7 +630,7 @@ class UnifiedAIService extends EventEmitter {
         size: file.size,
         processingTime: 1500,
         provider: 'unified_ai_service',
-        version: '2.0.1-firebase-enhanced'
+        version: '2.1.0-product-enhancement'
       }
     };
   }
@@ -513,7 +647,7 @@ class UnifiedAIService extends EventEmitter {
 
       const healthData = {
         status: 'healthy',
-        system: 'HiggsFlow Modular AI',
+        system: 'HiggsFlow Unified AI Service',
         modules: {
           total: modules.length,
           active: modules.filter(m => m.status === 'active').length,
@@ -534,6 +668,7 @@ class UnifiedAIService extends EventEmitter {
           persistence: 'permanent'
         },
         capabilities: [
+          'Product Enhancement (Siemens, SKF, ABB)',
           'Purchase Order Extraction',
           'Proforma Invoice Processing', 
           'Supplier-Specific Intelligence (PTP)',
@@ -541,7 +676,7 @@ class UnifiedAIService extends EventEmitter {
           'Performance Analytics',
           'Firebase Persistence'
         ],
-        version: '2.0.1-firebase-enhanced',
+        version: '2.1.0-product-enhancement',
         timestamp: new Date().toISOString()
       };
 
@@ -554,9 +689,9 @@ class UnifiedAIService extends EventEmitter {
       
       const errorHealthData = {
         status: 'degraded',
-        system: 'HiggsFlow Modular AI',
+        system: 'HiggsFlow Unified AI Service',
         error: error.message,
-        version: '2.0.1-firebase-enhanced',
+        version: '2.1.0-product-enhancement',
         timestamp: new Date().toISOString()
       };
 
@@ -635,6 +770,23 @@ class UnifiedAIService extends EventEmitter {
     this.on('performance_update', callback);
   }
 
+  // ✅ NEW: Product enhancement specific event listeners
+  onProductEnhancementComplete(callback) {
+    this.on('product_enhancement_complete', callback);
+  }
+
+  onProductEnhancementError(callback) {
+    this.on('product_enhancement_error', callback);
+  }
+
+  onAICallComplete(callback) {
+    this.on('ai_call_complete', callback);
+  }
+
+  onAICallError(callback) {
+    this.on('ai_call_error', callback);
+  }
+
   // Get all available events for MCP integration
   getAvailableEvents() {
     return [
@@ -653,6 +805,10 @@ class UnifiedAIService extends EventEmitter {
       'health_check',
       'quick_test_complete',
       'quick_test_error',
+      'product_enhancement_complete',  // ✅ NEW
+      'product_enhancement_error',     // ✅ NEW
+      'ai_call_complete',              // ✅ NEW
+      'ai_call_error',                 // ✅ NEW
       'error'
     ];
   }
