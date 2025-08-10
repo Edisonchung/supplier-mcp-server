@@ -1,27 +1,48 @@
-//services/ai/PromptManager.js - UPDATED WITH MISSING METHODS
-const fs = require('fs').promises;
-const path = require('path');
+//services/ai/PromptManager.js - UPDATED WITH FIRESTORE PERSISTENCE
+const { initializeApp } = require('firebase/app');
+const { getFirestore, collection, doc, setDoc, getDocs, deleteDoc, writeBatch } = require('firebase/firestore');
 const { v4: uuidv4 } = require('uuid');
 
 class PromptManager {
   constructor() {
-    this.promptsPath = path.join(__dirname, '../../data/ai/prompts.json');
+    // Initialize Firebase
+    const firebaseConfig = {
+      apiKey: process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY,
+      authDomain: process.env.FIREBASE_AUTH_DOMAIN || process.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || process.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: process.env.FIREBASE_APP_ID || process.env.VITE_FIREBASE_APP_ID
+    };
+    
+    const app = initializeApp(firebaseConfig);
+    this.db = getFirestore(app);
     this.prompts = new Map();
+    this.promptsCollection = collection(this.db, 'ai-prompts');
     this.loadPrompts();
   }
 
+  // UPDATED: Load prompts from Firestore instead of file
   async loadPrompts() {
     try {
-      const data = await fs.readFile(this.promptsPath, 'utf8');
-      const prompts = JSON.parse(data);
+      console.log('🔄 Loading prompts from Firestore...');
+      const querySnapshot = await getDocs(this.promptsCollection);
+      this.prompts.clear();
       
-      prompts.forEach(prompt => {
-        this.prompts.set(prompt.id, prompt);
+      querySnapshot.forEach((doc) => {
+        this.prompts.set(doc.id, doc.data());
       });
       
-      console.log(`✅ Loaded ${prompts.length} AI prompts`);
+      console.log(`✅ Loaded ${this.prompts.size} AI prompts from Firestore`);
+      
+      // If no prompts found, create defaults
+      if (this.prompts.size === 0) {
+        console.log('📝 No prompts found, creating defaults...');
+        await this.createDefaultPrompts();
+      }
     } catch (error) {
-      console.log('🔄 Creating default prompts configuration...');
+      console.error('❌ Error loading prompts from Firestore:', error);
+      console.log('🔄 Creating default prompts as fallback...');
       await this.createDefaultPrompts();
     }
   }
@@ -217,28 +238,32 @@ RETURN STRUCTURED JSON:
       this.prompts.set(prompt.id, prompt);
     });
 
-    // Save to file
+    // Save to Firestore
     await this.savePrompts();
-    console.log('✅ Created default HiggsFlow AI prompts');
+    console.log('✅ Created default HiggsFlow AI prompts in Firestore');
   }
 
+  // UPDATED: Save all prompts to Firestore using batch write
   async savePrompts() {
     try {
-      const promptsArray = Array.from(this.prompts.values());
+      console.log('💾 Saving prompts to Firestore...');
+      const batch = writeBatch(this.db);
       
-      // Ensure directory exists
-      const dir = path.dirname(this.promptsPath);
-      await fs.mkdir(dir, { recursive: true });
+      for (const [id, prompt] of this.prompts) {
+        const promptRef = doc(this.promptsCollection, id);
+        batch.set(promptRef, prompt);
+      }
       
-      await fs.writeFile(this.promptsPath, JSON.stringify(promptsArray, null, 2));
+      await batch.commit();
+      console.log('✅ All prompts saved to Firestore');
       return true;
     } catch (error) {
-      console.error('❌ Failed to save prompts:', error);
+      console.error('❌ Failed to save prompts to Firestore:', error);
       return false;
     }
   }
 
-  // Get best prompt for task (core intelligence)
+  // Get best prompt for task (core intelligence) - UNCHANGED
   async getPromptForTask(moduleId, taskCategory, context = {}) {
     const modulePrompts = Array.from(this.prompts.values())
       .filter(p => p.moduleId === moduleId && p.isActive);
@@ -283,7 +308,7 @@ RETURN STRUCTURED JSON:
     return bestPrompt;
   }
 
-  // 🔧 NEW: Get individual prompt
+  // Get individual prompt - UNCHANGED
   async getPrompt(promptId) {
     try {
       const prompt = this.prompts.get(promptId);
@@ -301,7 +326,7 @@ RETURN STRUCTURED JSON:
     }
   }
 
-  // Save or update prompt (enhanced version)
+  // UPDATED: Save individual prompt to Firestore
   async savePrompt(promptData) {
     try {
       const prompt = {
@@ -316,23 +341,22 @@ RETURN STRUCTURED JSON:
         prompt.createdAt = new Date().toISOString();
       }
 
+      // Save to Firestore
+      const promptRef = doc(this.promptsCollection, prompt.id);
+      await setDoc(promptRef, prompt);
+      
+      // Update local cache
       this.prompts.set(prompt.id, prompt);
-      const success = await this.savePrompts();
       
-      if (success) {
-        console.log(`✅ Prompt saved: ${prompt.id} - ${prompt.name}`);
-      } else {
-        console.error(`❌ Failed to save prompt: ${prompt.id}`);
-      }
-      
-      return success;
+      console.log(`✅ Prompt saved to Firestore: ${prompt.id} - ${prompt.name}`);
+      return true;
     } catch (error) {
-      console.error('❌ Error saving prompt:', error.message);
-      throw error;
+      console.error('❌ Error saving prompt to Firestore:', error.message);
+      return false;
     }
   }
 
-  // 🔧 NEW: Update existing prompt
+  // UPDATED: Update existing prompt in Firestore
   async updatePrompt(promptId, promptData) {
     try {
       const existingPrompt = this.prompts.get(promptId);
@@ -352,23 +376,22 @@ RETURN STRUCTURED JSON:
         createdAt: existingPrompt.createdAt
       };
 
+      // Save to Firestore
+      const promptRef = doc(this.promptsCollection, promptId);
+      await setDoc(promptRef, updatedPrompt);
+      
+      // Update local cache
       this.prompts.set(promptId, updatedPrompt);
-      const success = await this.savePrompts();
 
-      if (success) {
-        console.log(`✅ Prompt updated: ${promptId} - ${updatedPrompt.name}`);
-      } else {
-        console.error(`❌ Failed to update prompt: ${promptId}`);
-      }
-
-      return success;
+      console.log(`✅ Prompt updated in Firestore: ${promptId} - ${updatedPrompt.name}`);
+      return true;
     } catch (error) {
-      console.error(`❌ Error updating prompt ${promptId}:`, error.message);
-      throw error;
+      console.error(`❌ Error updating prompt ${promptId} in Firestore:`, error.message);
+      return false;
     }
   }
 
-  // 🔧 NEW: Delete prompt
+  // UPDATED: Delete prompt from Firestore
   async deletePrompt(promptId) {
     try {
       const existingPrompt = this.prompts.get(promptId);
@@ -378,28 +401,25 @@ RETURN STRUCTURED JSON:
         return false;
       }
 
-      // Remove from memory
-      this.prompts.delete(promptId);
+      // Delete from Firestore
+      await deleteDoc(doc(this.promptsCollection, promptId));
       
-      // Save to file
-      const success = await this.savePrompts();
+      // Remove from local cache
+      this.prompts.delete(promptId);
 
-      if (success) {
-        console.log(`✅ Prompt deleted: ${promptId} - ${existingPrompt.name}`);
-      } else {
-        console.error(`❌ Failed to delete prompt: ${promptId}`);
-        // Restore in memory if file save failed
+      console.log(`✅ Prompt deleted from Firestore: ${promptId} - ${existingPrompt.name}`);
+      return true;
+    } catch (error) {
+      console.error(`❌ Error deleting prompt ${promptId} from Firestore:`, error.message);
+      // Restore in memory if Firestore delete failed
+      if (existingPrompt) {
         this.prompts.set(promptId, existingPrompt);
       }
-
-      return success;
-    } catch (error) {
-      console.error(`❌ Error deleting prompt ${promptId}:`, error.message);
-      throw error;
+      return false;
     }
   }
 
-  // Test prompt performance (enhanced)
+  // Test prompt performance - UNCHANGED but enhanced with Firestore save
   async testPrompt(promptId, testData) {
     const prompt = this.prompts.get(promptId);
     if (!prompt) {
@@ -436,8 +456,8 @@ RETURN STRUCTURED JSON:
         testCount: (prompt.performance?.testCount || 0) + 1
       };
 
-      // Save updated prompt
-      await this.savePrompts();
+      // Save updated prompt to Firestore
+      await this.savePrompt(prompt);
 
       console.log(`✅ Prompt tested: ${promptId} - Confidence: ${testResult.result.confidence.toFixed(2)}`);
       
@@ -448,34 +468,34 @@ RETURN STRUCTURED JSON:
     }
   }
 
-  // Get all prompts
+  // Get all prompts - UNCHANGED
   getAllPrompts() {
     return Array.from(this.prompts.values());
   }
 
-  // Get prompts by module
+  // Get prompts by module - UNCHANGED
   getPromptsByModule(moduleId) {
     return Array.from(this.prompts.values()).filter(p => p.moduleId === moduleId);
   }
 
-  // 🔧 NEW: Get prompts by category
+  // Get prompts by category - UNCHANGED
   getPromptsByCategory(category) {
     return Array.from(this.prompts.values()).filter(p => p.category === category);
   }
 
-  // 🔧 NEW: Get active prompts only
+  // Get active prompts only - UNCHANGED
   getActivePrompts() {
     return Array.from(this.prompts.values()).filter(p => p.isActive);
   }
 
-  // 🔧 NEW: Get prompts by supplier
+  // Get prompts by supplier - UNCHANGED
   getPromptsBySupplier(supplier) {
     return Array.from(this.prompts.values()).filter(p => 
       p.suppliers?.includes('ALL') || p.suppliers?.includes(supplier)
     );
   }
 
-  // 🔧 NEW: Get prompt statistics
+  // Get prompt statistics - UNCHANGED
   getPromptStats() {
     const prompts = this.getAllPrompts();
     
@@ -500,7 +520,7 @@ RETURN STRUCTURED JSON:
     };
   }
 
-  // 🔧 NEW: Validate prompt data
+  // Validate prompt data - UNCHANGED
   validatePromptData(promptData) {
     const errors = [];
 
