@@ -6,6 +6,33 @@ const path = require('path');
 // Load environment variables
 dotenv.config();
 
+// 🆕 ADD: Firebase initialization for prompt persistence
+const { initializeApp } = require('firebase/app');
+const { getFirestore } = require('firebase/firestore');
+
+// Initialize Firebase for the backend
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || process.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || process.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || process.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID || process.env.VITE_FIREBASE_APP_ID
+};
+
+// Global Firebase initialization
+let firebaseApp = null;
+let db = null;
+
+try {
+  firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
+  console.log('🔥 Firebase initialized successfully for prompt persistence');
+} catch (error) {
+  console.warn('⚠️ Firebase initialization failed:', error.message);
+  console.warn('📝 Prompts will use fallback storage (may be lost on deployment)');
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -36,6 +63,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Modular-AI-Enabled', 'true');
   res.setHeader('X-MCP-Version', '2.0.0');
   res.setHeader('X-MCP-WebSocket', `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
+  res.setHeader('X-Firebase-Enabled', firebaseApp ? 'true' : 'false'); // 🆕 ADD: Firebase status header
   next();
 });
 
@@ -51,7 +79,7 @@ app.use('/api/ai', aiRoutes);
 const mcpRoutes = require('./routes/mcp.routes');
 app.use('/api/mcp', mcpRoutes);
 
-// Enhanced health check endpoint with AI and MCP system status
+// Enhanced health check endpoint with AI, MCP, and Firebase system status
 app.get('/health', async (req, res) => {
   try {
     // Get AI system health
@@ -71,14 +99,40 @@ app.get('/health', async (req, res) => {
       mcpStatus = { status: 'initializing', error: mcpError.message };
     }
     
+    // 🆕 ADD: Firebase/Prompt system health
+    let promptSystemHealth = { status: 'error', storage: 'fallback' };
+    try {
+      if (firebaseApp && db) {
+        // Try to access Firestore to verify connection
+        const { collection, getDocs, limit, query } = require('firebase/firestore');
+        const testQuery = query(collection(db, 'ai-prompts'), limit(1));
+        await getDocs(testQuery);
+        promptSystemHealth = { 
+          status: 'active', 
+          storage: 'firestore', 
+          connection: 'verified',
+          database: firebaseConfig.projectId
+        };
+      }
+    } catch (firebaseError) {
+      console.warn('Firebase health check failed:', firebaseError.message);
+      promptSystemHealth = { 
+        status: 'degraded', 
+        storage: 'fallback', 
+        error: firebaseError.message 
+      };
+    }
+    
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       services: {
         core: 'active',
         modularAI: aiHealth.status,
-        mcp: mcpStatus.status, // New MCP status
-        ai: 'active'
+        mcp: mcpStatus.status,
+        ai: 'active',
+        promptSystem: promptSystemHealth.status, // 🆕 ADD: Prompt system status
+        firebase: firebaseApp ? 'active' : 'disabled' // 🆕 ADD: Firebase status
       },
       ai: {
         modules: aiHealth.modules,
@@ -93,25 +147,44 @@ app.get('/health', async (req, res) => {
         capabilities: mcpStatus.capabilities || [],
         version: '2.0.0'
       },
+      // 🆕 ADD: Prompt system details
+      promptSystem: {
+        storage: promptSystemHealth.storage,
+        persistence: promptSystemHealth.storage === 'firestore' ? 'permanent' : 'temporary',
+        database: promptSystemHealth.database || 'none',
+        status: promptSystemHealth.status,
+        error: promptSystemHealth.error || null
+      },
+      // 🆕 ADD: Firebase details
+      firebase: {
+        enabled: !!firebaseApp,
+        projectId: firebaseConfig.projectId || 'none',
+        connection: promptSystemHealth.connection || 'not_tested',
+        services: {
+          firestore: !!db ? 'enabled' : 'disabled',
+          auth: 'available',
+          storage: 'available'
+        }
+      },
       timeouts: {
         request: '5 minutes',
         response: '5 minutes',
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced',
+      version: '2.0.0-mcp-enhanced-firebase', // 🆕 UPDATE: Version to indicate Firebase support
       endpoints: {
         health: '/health',
         api: '/api',
         ai: '/api/ai',
-        mcp: '/api/mcp', // New MCP endpoints
+        mcp: '/api/mcp',
         aiDocs: '/api/ai/docs',
-        mcpDocs: '/api/mcp/docs', // New MCP documentation
+        mcpDocs: '/api/mcp/docs',
         extraction: '/api/purchase-orders/extract',
         bankPayment: '/api/bank-payments/extract',
         enhancedExtraction: '/api/ai/extract/purchase-order',
         enhancedPIExtraction: '/api/ai/extract/proforma-invoice',
-        mcpExtraction: '/api/mcp/extract', // Enhanced MCP extraction
+        mcpExtraction: '/api/mcp/extract',
         mcpWebSocket: `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`
       },
       features: {
@@ -121,11 +194,13 @@ app.get('/health', async (req, res) => {
         enhancedExtraction: true,
         performanceTracking: true,
         backwardCompatible: true,
-        mcpEnhanced: true, // New MCP feature flag
+        mcpEnhanced: true,
         realTimeProcessing: true,
         batchProcessing: true,
         streamingSupport: true,
-        websocketCommunication: true
+        websocketCommunication: true,
+        persistentPrompts: promptSystemHealth.storage === 'firestore', // 🆕 ADD: Prompt persistence feature
+        firebaseIntegration: !!firebaseApp // 🆕 ADD: Firebase integration feature
       }
     });
   } catch (error) {
@@ -137,7 +212,9 @@ app.get('/health', async (req, res) => {
         core: 'active',
         modularAI: 'error',
         mcp: 'error',
-        ai: 'active'
+        ai: 'active',
+        promptSystem: 'error',
+        firebase: 'error'
       },
       timeouts: {
         request: '5 minutes',
@@ -145,7 +222,7 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced',
+      version: '2.0.0-mcp-enhanced-firebase',
       ai_status: 'initializing',
       error: error.message
     });
@@ -155,8 +232,8 @@ app.get('/health', async (req, res) => {
 // Enhanced root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'HiggsFlow Supplier MCP Server with Advanced AI & MCP',
-    version: '2.0.0-mcp-enhanced',
+    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP & Firebase',
+    version: '2.0.0-mcp-enhanced-firebase', // 🆕 UPDATE: Version
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
@@ -167,7 +244,9 @@ app.get('/', (req, res) => {
       'Real-time WebSocket communication',
       'Advanced tool orchestration',
       'Batch processing',
-      'Streaming processes'
+      'Streaming processes',
+      'Persistent prompt storage (Firebase)', // 🆕 ADD: Firebase feature
+      'Zero data loss on deployments' // 🆕 ADD: Persistence benefit
     ],
     endpoints: {
       health: '/health',
@@ -186,6 +265,12 @@ app.get('/', (req, res) => {
     websocket: {
       mcp: `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`,
       description: 'Real-time MCP communication and streaming'
+    },
+    // 🆕 ADD: Persistence information
+    persistence: {
+      prompts: firebaseApp ? 'Firebase Firestore (permanent)' : 'File storage (temporary)',
+      dataLoss: firebaseApp ? 'Protected from deployment resets' : 'May be lost on deployment',
+      database: firebaseConfig.projectId || 'none'
     }
   });
 });
@@ -228,6 +313,15 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // 🆕 ADD: Firebase-specific errors
+  if (err.message && (err.message.includes('Firebase') || err.message.includes('Firestore'))) {
+    return res.status(500).json({
+      success: false,
+      message: 'Firebase service error: ' + err.message,
+      context: 'firebase_service'
+    });
+  }
+  
   res.status(500).json({
     success: false,
     message: err.message || 'Internal server error'
@@ -244,11 +338,22 @@ app.use((req, res) => {
 
 // Start server with enhanced logging
 const server = app.listen(PORT, () => {
-  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced) is running on port ${PORT}`);
+  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase) is running on port ${PORT}`);
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`);
+  
+  // 🆕 ADD: Firebase status logging
+  console.log('\n🔥 Firebase Integration Status:');
+  if (firebaseApp && db) {
+    console.log(`   ✅ Firebase connected to project: ${firebaseConfig.projectId}`);
+    console.log(`   ✅ Firestore database ready for prompt persistence`);
+    console.log(`   ✅ Prompts will survive all deployments`);
+  } else {
+    console.log(`   ⚠️  Firebase not configured - prompts may be lost on deployment`);
+    console.log(`   💡 Add Firebase environment variables to enable persistence`);
+  }
   
   // Log AI endpoints
   console.log('\n🤖 Modular AI endpoints:');
@@ -281,10 +386,16 @@ const server = app.listen(PORT, () => {
   const requiredEnvVars = ['DEEPSEEK_API_KEY'];
   const optionalEnvVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_AI_API_KEY'];
   const mcpEnvVars = ['MCP_WS_PORT'];
+  // 🆕 ADD: Firebase environment variables
+  const firebaseEnvVars = [
+    'FIREBASE_API_KEY', 'FIREBASE_AUTH_DOMAIN', 'FIREBASE_PROJECT_ID',
+    'FIREBASE_STORAGE_BUCKET', 'FIREBASE_MESSAGING_SENDER_ID', 'FIREBASE_APP_ID'
+  ];
   
   const missingRequired = requiredEnvVars.filter(envVar => !process.env[envVar]);
   const missingOptional = optionalEnvVars.filter(envVar => !process.env[envVar]);
   const missingMCP = mcpEnvVars.filter(envVar => !process.env[envVar]);
+  const missingFirebase = firebaseEnvVars.filter(envVar => !process.env[envVar] && !process.env[`VITE_${envVar}`]);
 
   if (missingRequired.length > 0) {
     console.log('\n⚠️  Missing REQUIRED environment variables:');
@@ -311,6 +422,24 @@ const server = app.listen(PORT, () => {
     console.log('✅ MCP configuration complete');
   }
   
+  // 🆕 ADD: Firebase configuration check
+  if (missingFirebase.length > 0) {
+    console.log('\n⚠️  Firebase configuration incomplete:');
+    console.log('   Missing variables (prompts may be lost on deployment):');
+    missingFirebase.forEach(envVar => {
+      console.log(`   - ${envVar}`);
+    });
+    console.log('\n💡 To enable persistent prompt storage, add these to Railway:');
+    console.log('   FIREBASE_API_KEY=AIzaSyBxNZe2RYL1vJZgu93C3zdz2r0J-lDYgCY');
+    console.log('   FIREBASE_AUTH_DOMAIN=higgsflow-b9f81.firebaseapp.com');
+    console.log('   FIREBASE_PROJECT_ID=higgsflow-b9f81');
+    console.log('   FIREBASE_STORAGE_BUCKET=higgsflow-b9f81.firebasestorage.app');
+    console.log('   FIREBASE_MESSAGING_SENDER_ID=717201513347');
+    console.log('   FIREBASE_APP_ID=1:717201513347:web:86abc12a7dcebe914834b6');
+  } else {
+    console.log('✅ Firebase configuration complete - prompts will persist');
+  }
+  
   console.log('\n🎯 Features enabled:');
   console.log('   ✅ Modular AI architecture');
   console.log('   ✅ Multi-provider AI support');
@@ -323,11 +452,14 @@ const server = app.listen(PORT, () => {
   console.log('   ✅ Advanced AI tool orchestration');
   console.log('   ✅ Batch processing capabilities');
   console.log('   ✅ Streaming process support');
+  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Persistent prompt storage (Firebase)`); // 🆕 ADD: Firebase feature status
+  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Zero data loss on deployments`); // 🆕 ADD: Persistence benefit status
   
-  console.log('\n🚀 Phase 2 (MCP Enhancement) ready for testing!');
+  console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase) ready for testing!');
   console.log(`   Test: curl http://localhost:${PORT}/api/mcp/status`);
   console.log(`   Docs: http://localhost:${PORT}/api/mcp/docs`);
   console.log(`   WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
+  console.log(`   Firebase: ${firebaseApp ? 'Connected' : 'Not configured'}`);
 });
 
 // Graceful shutdown
