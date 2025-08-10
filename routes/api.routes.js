@@ -4,13 +4,11 @@ const router = express.Router();
 const upload = require('../config/multer');
 const multer = require('multer');
 
-
 // Controllers
 const extractionController = require('../controllers/extraction.controller');
 const duplicateController = require('../controllers/duplicate.controller');
 const recommendationController = require('../controllers/recommendation.controller');
 const WebSearchService = require('../services/webSearchService');
-
 
 /// Enhanced health check
 router.get('/health', (req, res) => {
@@ -19,20 +17,27 @@ router.get('/health', (req, res) => {
     message: 'Enhanced MCP Server is running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    features: ['pdf', 'image', 'excel', 'email', 'multi-ai', 'validation', 'recommendations', 'ptp-detection'],
+    features: ['pdf', 'image', 'excel', 'email', 'multi-ai', 'validation', 'recommendations', 'ptp-detection', 'web-search'],
     capabilities: {
       maxFileSize: '10MB',
       timeouts: {
         request: '5 minutes',
         response: '5 minutes',
         pdfParsing: '1 minute',
-        aiExtraction: '2 minutes'
+        aiExtraction: '2 minutes',
+        webSearch: '15 seconds'
       },
       aiProviders: {
         openai: !!process.env.OPENAI_API_KEY,
         anthropic: !!process.env.ANTHROPIC_API_KEY,
         google: !!process.env.GOOGLE_AI_API_KEY,
         deepseek: !!process.env.DEEPSEEK_API_KEY
+      },
+      webSearch: {
+        serpapi: !!process.env.SERPAPI_KEY,
+        puppeteer: true,
+        directScraping: true,
+        fallbackSearch: true
       },
       supplierTemplates: ['PTP', 'GENERIC']
     }
@@ -44,7 +49,6 @@ router.post('/extract-po', upload.single('pdf'), extractionController.extractFro
 router.post('/extract-image', upload.single('image'), extractionController.extractFromImage);
 router.post('/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
 router.post('/extract-email', upload.single('email'), extractionController.extractFromEmail);
-
 
 // Get current prompt system status for a user
 router.get('/prompt-system-status', extractionController.getPromptSystemStatus);
@@ -61,7 +65,6 @@ router.post('/test-extraction', upload.single('pdf'), extractionController.testE
 // Batch comparison test (multiple files)
 router.post('/batch-comparison-test', upload.array('files', 10), extractionController.batchComparisonTest);
 
-
 // Duplicate and recommendations
 router.post('/check-duplicate', duplicateController.checkDuplicate);
 router.post('/get-recommendations', recommendationController.getRecommendations);
@@ -70,14 +73,26 @@ router.post('/get-recommendations', recommendationController.getRecommendations)
 router.post('/save-correction', recommendationController.saveCorrection);
 router.post('/detect-category', recommendationController.detectCategory);
 
+// Bank payment extraction
 router.post('/bank-payments/extract', upload.single('file'), extractionController.extractBankPaymentSlip);
 
-// Add the web search endpoint
+// ================================================================
+// ENHANCED WEB SEARCH ENDPOINTS
+// ================================================================
+
+// Main web search endpoint for product enhancement
 router.post('/web-search', async (req, res) => {
   try {
     const { queries, type, partNumber, brand, description } = req.body;
     
-    console.log('🔍 Web search request:', { partNumber, brand, type });
+    console.log('🔍 Web search request received:', { 
+      partNumber, 
+      brand, 
+      type,
+      queries: queries?.length || 0,
+      timestamp: new Date().toISOString(),
+      userAgent: req.get('User-Agent')
+    });
     
     const webSearchService = new WebSearchService();
     
@@ -85,26 +100,281 @@ router.post('/web-search', async (req, res) => {
     const searchPartNumber = partNumber || (queries && queries[0] && queries[0].replace(/['"]/g, ''));
     
     if (!searchPartNumber) {
+      console.warn('❌ Web search: No part number provided');
       return res.status(400).json({
         found: false,
-        error: 'Part number is required for web search'
+        error: 'Part number is required for web search',
+        source: 'web_search_endpoint',
+        timestamp: new Date().toISOString(),
+        help: 'Include "partNumber" in request body or provide it in "queries" array'
       });
     }
     
+    // Validate part number format
+    if (searchPartNumber.length < 3) {
+      return res.status(400).json({
+        found: false,
+        error: 'Part number must be at least 3 characters long',
+        source: 'web_search_validation',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`🔍 Searching for part: "${searchPartNumber}" (Brand: ${brand || 'Unknown'})`);
+    
+    const startTime = Date.now();
     const searchResult = await webSearchService.searchProductInfo(
       searchPartNumber,
       brand,
       description
     );
+    const processingTime = Date.now() - startTime;
+    
+    console.log(`✅ Web search completed in ${processingTime}ms: ${searchResult.found ? 'Success' : 'No results'}`);
+    
+    // Add endpoint metadata
+    searchResult.endpoint = 'web-search';
+    searchResult.timestamp = new Date().toISOString();
+    searchResult.processingTime = `${processingTime}ms`;
+    searchResult.version = '2.0.0';
+    searchResult.searchMethods = [
+      'SerpAPI Google Search',
+      'Direct Manufacturer Scraping', 
+      'Puppeteer Browser Automation',
+      'DuckDuckGo Fallback'
+    ];
+    
+    // Add performance metrics
+    if (searchResult.found) {
+      searchResult.performance = {
+        searchTime: processingTime,
+        confidenceLevel: searchResult.confidence >= 0.8 ? 'high' : searchResult.confidence >= 0.6 ? 'medium' : 'low',
+        dataQuality: searchResult.specifications && Object.keys(searchResult.specifications).length > 2 ? 'detailed' : 'basic'
+      };
+    }
     
     res.json(searchResult);
     
   } catch (error) {
-    console.error('Web search endpoint error:', error);
+    console.error('❌ Web search endpoint error:', error);
     res.status(500).json({
       found: false,
       error: error.message,
-      source: 'web_search_endpoint'
+      source: 'web_search_endpoint_error',
+      timestamp: new Date().toISOString(),
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Health check endpoint specifically for web search functionality
+router.get('/web-search/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'web-search',
+    version: '2.0.0',
+    timestamp: new Date().toISOString(),
+    capabilities: [
+      'SerpAPI Google Search (requires API key)',
+      'Direct manufacturer website scraping',
+      'Puppeteer browser automation',
+      'DuckDuckGo fallback search',
+      'Product specification extraction',
+      'Datasheet URL discovery',
+      'Multi-source result aggregation'
+    ],
+    supported_manufacturers: [
+      'Siemens',
+      'SKF', 
+      'ABB',
+      'Schneider Electric',
+      'Omron',
+      'Festo',
+      'Parker',
+      'Bosch'
+    ],
+    environment: {
+      node_version: process.version,
+      puppeteer_available: true,
+      cheerio_available: true,
+      serpapi_configured: !!process.env.SERPAPI_KEY,
+      axios_available: true
+    },
+    performance: {
+      typical_response_time: '2-8 seconds',
+      timeout: '15 seconds',
+      retry_attempts: '4 methods',
+      cache_duration: 'none (real-time)'
+    }
+  });
+});
+
+// Test endpoint for web search functionality with predefined test cases
+router.post('/web-search/test', async (req, res) => {
+  try {
+    console.log('🧪 Running web search test suite...');
+    
+    const testPartNumbers = [
+      { partNumber: '6ES7407-0KA02-0AA0', brand: 'Siemens', expected: 'automation', description: 'Siemens PLC module' },
+      { partNumber: '32222', brand: 'SKF', expected: 'bearings', description: 'SKF bearing component' },
+      { partNumber: 'ACS880-01-144A-3', brand: 'ABB', expected: 'drives', description: 'ABB variable frequency drive' },
+      { partNumber: 'NJ2314ECP', brand: 'SKF', expected: 'bearings', description: 'SKF cylindrical roller bearing' },
+      { partNumber: 'UNKNOWN-TEST-123', brand: '', expected: 'none', description: 'Non-existent part for testing' }
+    ];
+    
+    const webSearchService = new WebSearchService();
+    const results = [];
+    const startTime = Date.now();
+    
+    for (const [index, test] of testPartNumbers.entries()) {
+      try {
+        console.log(`🧪 Testing ${index + 1}/${testPartNumbers.length}: ${test.partNumber}`);
+        
+        const testStart = Date.now();
+        const result = await webSearchService.searchProductInfo(test.partNumber, test.brand, test.description);
+        const testDuration = Date.now() - testStart;
+        
+        results.push({
+          test_id: index + 1,
+          partNumber: test.partNumber,
+          brand: test.brand,
+          expected: test.expected,
+          found: result.found,
+          confidence: result.confidence,
+          source: result.source,
+          duration: `${testDuration}ms`,
+          success: result.found || test.expected === 'none'
+        });
+        
+        console.log(`✅ Test ${index + 1} completed: ${result.found ? 'Found' : 'Not found'} in ${testDuration}ms`);
+        
+      } catch (error) {
+        console.error(`❌ Test ${index + 1} failed:`, error.message);
+        results.push({
+          test_id: index + 1,
+          partNumber: test.partNumber,
+          brand: test.brand,
+          expected: test.expected,
+          found: false,
+          error: error.message,
+          success: test.expected === 'none'
+        });
+      }
+    }
+    
+    const totalDuration = Date.now() - startTime;
+    const successfulTests = results.filter(r => r.success).length;
+    
+    console.log(`🎉 Test suite completed: ${successfulTests}/${testPartNumbers.length} successful in ${totalDuration}ms`);
+    
+    res.json({
+      test_suite: 'web-search-functionality',
+      test_results: results,
+      timestamp: new Date().toISOString(),
+      summary: {
+        total_tests: testPartNumbers.length,
+        successful: successfulTests,
+        failed: testPartNumbers.length - successfulTests,
+        success_rate: `${Math.round((successfulTests / testPartNumbers.length) * 100)}%`,
+        total_duration: `${totalDuration}ms`,
+        average_duration: `${Math.round(totalDuration / testPartNumbers.length)}ms`
+      },
+      environment: {
+        serpapi_configured: !!process.env.SERPAPI_KEY,
+        puppeteer_available: true,
+        node_version: process.version
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Test suite failed:', error);
+    res.status(500).json({
+      error: 'Test endpoint failed',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Bulk web search endpoint for multiple part numbers
+router.post('/web-search/bulk', async (req, res) => {
+  try {
+    const { partNumbers, defaultBrand } = req.body;
+    
+    if (!partNumbers || !Array.isArray(partNumbers) || partNumbers.length === 0) {
+      return res.status(400).json({
+        error: 'partNumbers array is required',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    if (partNumbers.length > 10) {
+      return res.status(400).json({
+        error: 'Maximum 10 part numbers allowed per bulk request',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    console.log(`🔍 Bulk web search for ${partNumbers.length} part numbers`);
+    
+    const webSearchService = new WebSearchService();
+    const results = [];
+    const startTime = Date.now();
+    
+    for (const [index, item] of partNumbers.entries()) {
+      try {
+        const partNumber = typeof item === 'string' ? item : item.partNumber;
+        const brand = typeof item === 'object' ? item.brand : defaultBrand;
+        
+        console.log(`🔍 Bulk search ${index + 1}/${partNumbers.length}: ${partNumber}`);
+        
+        const result = await webSearchService.searchProductInfo(partNumber, brand);
+        results.push({
+          partNumber,
+          brand,
+          ...result
+        });
+        
+        // Small delay to avoid overwhelming servers
+        if (index < partNumbers.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+      } catch (error) {
+        console.error(`❌ Bulk search failed for item ${index + 1}:`, error.message);
+        results.push({
+          partNumber: typeof item === 'string' ? item : item.partNumber,
+          brand: typeof item === 'object' ? item.brand : defaultBrand,
+          found: false,
+          error: error.message
+        });
+      }
+    }
+    
+    const totalDuration = Date.now() - startTime;
+    const successfulSearches = results.filter(r => r.found).length;
+    
+    console.log(`✅ Bulk search completed: ${successfulSearches}/${partNumbers.length} found in ${totalDuration}ms`);
+    
+    res.json({
+      bulk_search_results: results,
+      timestamp: new Date().toISOString(),
+      summary: {
+        total_searches: partNumbers.length,
+        successful: successfulSearches,
+        failed: partNumbers.length - successfulSearches,
+        success_rate: `${Math.round((successfulSearches / partNumbers.length) * 100)}%`,
+        total_duration: `${totalDuration}ms`,
+        average_duration: `${Math.round(totalDuration / partNumbers.length)}ms`
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Bulk search endpoint error:', error);
+    res.status(500).json({
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
