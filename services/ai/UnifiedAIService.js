@@ -1,4 +1,4 @@
-//services/ai/UnifiedAIService.js - UPDATED WITH MISSING METHODS
+//services/ai/UnifiedAIService.js - UPDATED WITH FIREBASE INTEGRATION
 const AIModuleManager = require('./AIModuleManager');
 const PromptManager = require('./PromptManager');
 const AIProviderManager = require('./AIProviderManager');
@@ -17,18 +17,28 @@ class UnifiedAIService extends EventEmitter {
 
   async initialize() {
     try {
-      // Give managers time to load their data
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log('✅ HiggsFlow Unified AI Service initialized');
+      // Wait for PromptManager to fully initialize (especially Firebase)
+      console.log('🔄 Initializing UnifiedAIService...');
+      
+      // Give PromptManager time to load from Firebase
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Verify PromptManager has loaded prompts
+      const prompts = this.promptManager.getAllPrompts();
+      console.log(`✅ HiggsFlow Unified AI Service initialized with ${prompts.length} prompts`);
       
       // Emit initialization complete event
       this.emit('initialized', {
         timestamp: new Date().toISOString(),
-        version: '2.0.0-modular'
+        version: '2.0.1-firebase-enhanced',
+        promptsLoaded: prompts.length
       });
+      
+      return true;
     } catch (error) {
       console.error('❌ Unified AI Service initialization failed:', error);
       this.emit('error', error);
+      throw error;
     }
   }
 
@@ -129,7 +139,7 @@ class UnifiedAIService extends EventEmitter {
           provider: aiProvider,
           processingTime,
           confidence,
-          version: '2.0.0-modular',
+          version: '2.0.1-firebase-enhanced',
           supplier: context.supplier || 'unknown',
           documentType: context.documentType || 'unknown'
         }
@@ -161,7 +171,7 @@ class UnifiedAIService extends EventEmitter {
           processingTime,
           taskType,
           context,
-          version: '2.0.0-modular'
+          version: '2.0.1-firebase-enhanced'
         }
       };
     }
@@ -301,15 +311,40 @@ class UnifiedAIService extends EventEmitter {
     return result;
   }
 
+  // 🔧 UPDATED: Enhanced prompt management with Firebase support
   async getPrompts(moduleId = null) {
     await this.initPromise;
-    if (moduleId) {
-      return this.promptManager.getPromptsByModule(moduleId);
+    
+    try {
+      let prompts;
+      if (moduleId) {
+        prompts = this.promptManager.getPromptsByModule(moduleId);
+      } else {
+        prompts = this.promptManager.getAllPrompts();
+      }
+      
+      // Ensure prompts is always an array
+      return Array.isArray(prompts) ? prompts : [];
+    } catch (error) {
+      console.error('❌ Error getting prompts:', error);
+      return [];
     }
-    return this.promptManager.getAllPrompts();
   }
 
-  // 🔧 NEW: Get individual prompt
+  // 🔧 UPDATED: Get prompts by module with better error handling
+  async getPromptsByModule(moduleId) {
+    await this.initPromise;
+    
+    try {
+      const prompts = this.promptManager.getPromptsByModule(moduleId);
+      return Array.isArray(prompts) ? prompts : [];
+    } catch (error) {
+      console.error(`❌ Error getting prompts for module ${moduleId}:`, error);
+      return [];
+    }
+  }
+
+  // 🔧 UPDATED: Get individual prompt with Firebase integration
   async getPrompt(promptId) {
     await this.initPromise;
     
@@ -317,7 +352,7 @@ class UnifiedAIService extends EventEmitter {
       const prompt = await this.promptManager.getPrompt(promptId);
       
       if (prompt) {
-        console.log(`✅ Retrieved prompt: ${promptId}`);
+        console.log(`✅ Retrieved prompt: ${promptId} - ${prompt.name}`);
       } else {
         console.log(`⚠️ Prompt not found: ${promptId}`);
       }
@@ -329,34 +364,58 @@ class UnifiedAIService extends EventEmitter {
     }
   }
 
+  // 🔧 UPDATED: Save prompt with Firebase integration
   async savePrompt(promptData) {
     await this.initPromise;
-    const result = await this.promptManager.savePrompt(promptData);
     
-    // Emit prompt save event
-    this.emit('prompt_saved', {
-      promptData,
-      timestamp: new Date().toISOString()
-    });
-    
-    return result;
+    try {
+      // Add metadata if not present
+      if (!promptData.createdAt) {
+        promptData.createdAt = new Date().toISOString();
+      }
+      promptData.lastModified = new Date().toISOString();
+      
+      const result = await this.promptManager.savePrompt(promptData);
+      
+      if (result) {
+        // Emit prompt save event
+        this.emit('prompt_saved', {
+          promptData,
+          timestamp: new Date().toISOString()
+        });
+        
+        console.log(`✅ Prompt saved: ${promptData.id || 'new'} - ${promptData.name}`);
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error saving prompt:', error);
+      throw error;
+    }
   }
 
-  // 🔧 NEW: Update existing prompt
+  // 🔧 UPDATED: Update existing prompt with Firebase integration
   async updatePrompt(promptId, promptData) {
     await this.initPromise;
     
     try {
+      // Ensure ID consistency and add metadata
+      promptData.id = promptId;
+      promptData.lastModified = new Date().toISOString();
+      
       const result = await this.promptManager.updatePrompt(promptId, promptData);
       
-      // Emit prompt update event
-      this.emit('prompt_updated', {
-        promptId,
-        promptData,
-        timestamp: new Date().toISOString()
-      });
+      if (result) {
+        // Emit prompt update event
+        this.emit('prompt_updated', {
+          promptId,
+          promptData,
+          timestamp: new Date().toISOString()
+        });
+        
+        console.log(`✅ Prompt updated: ${promptId} - ${promptData.name}`);
+      }
       
-      console.log(`✅ Prompt updated: ${promptId}`);
       return result;
     } catch (error) {
       console.error(`❌ Failed to update prompt ${promptId}:`, error.message);
@@ -364,20 +423,23 @@ class UnifiedAIService extends EventEmitter {
     }
   }
 
-  // 🔧 NEW: Delete prompt
+  // 🔧 UPDATED: Delete prompt with Firebase integration
   async deletePrompt(promptId) {
     await this.initPromise;
     
     try {
       const result = await this.promptManager.deletePrompt(promptId);
       
-      // Emit prompt delete event
-      this.emit('prompt_deleted', {
-        promptId,
-        timestamp: new Date().toISOString()
-      });
+      if (result) {
+        // Emit prompt delete event
+        this.emit('prompt_deleted', {
+          promptId,
+          timestamp: new Date().toISOString()
+        });
+        
+        console.log(`✅ Prompt deleted: ${promptId}`);
+      }
       
-      console.log(`✅ Prompt deleted: ${promptId}`);
       return result;
     } catch (error) {
       console.error(`❌ Failed to delete prompt ${promptId}:`, error.message);
@@ -385,24 +447,13 @@ class UnifiedAIService extends EventEmitter {
     }
   }
 
+  // 🔧 UPDATED: Test prompt with enhanced error handling
   async testPrompt(promptId, testData) {
     await this.initPromise;
     
     try {
-      // Get the prompt first
-      const prompt = await this.promptManager.getPrompt(promptId);
-      if (!prompt) {
-        throw new Error(`Prompt not found: ${promptId}`);
-      }
-
-      // Test the prompt with the provided data
-      const result = await this.processTask('test', testData, {
-        promptId,
-        prompt: prompt.prompt,
-        aiProvider: prompt.aiProvider || 'deepseek',
-        temperature: prompt.temperature || 0.1,
-        maxTokens: prompt.maxTokens || 2500
-      });
+      // Use PromptManager's test method which handles Firebase
+      const result = await this.promptManager.testPrompt(promptId, testData);
 
       // Emit prompt test event
       this.emit('prompt_tested', {
@@ -412,6 +463,8 @@ class UnifiedAIService extends EventEmitter {
         timestamp: new Date().toISOString()
       });
 
+      console.log(`✅ Prompt tested: ${promptId} - Confidence: ${result.result?.confidence?.toFixed(2) || 'N/A'}`);
+      
       return result;
     } catch (error) {
       console.error(`❌ Failed to test prompt ${promptId}:`, error.message);
@@ -423,7 +476,7 @@ class UnifiedAIService extends EventEmitter {
     return this.providerManager.getProviderStatus();
   }
 
-  // 🔧 NEW: Extract document wrapper for new API
+  // 🔧 UPDATED: Extract document wrapper for new API
   async extractDocument(file, documentType) {
     // For now, return a mock response until you integrate with your existing extraction logic
     return {
@@ -443,51 +496,73 @@ class UnifiedAIService extends EventEmitter {
         size: file.size,
         processingTime: 1500,
         provider: 'unified_ai_service',
-        version: '2.0.0-modular'
+        version: '2.0.1-firebase-enhanced'
       }
     };
   }
 
-  // Comprehensive health check
+  // 🔧 UPDATED: Comprehensive health check with Firebase status
   async healthCheck() {
     await this.initPromise;
     
-    const modules = this.moduleManager.getAllModules();
-    const prompts = this.promptManager.getAllPrompts();
-    const providerStatus = this.providerManager.getProviderStatus();
+    try {
+      const modules = this.moduleManager.getAllModules();
+      const prompts = this.promptManager.getAllPrompts();
+      const promptStats = this.promptManager.getPromptStats();
+      const providerStatus = this.providerManager.getProviderStatus();
 
-    const healthData = {
-      status: 'healthy',
-      system: 'HiggsFlow Modular AI',
-      modules: {
-        total: modules.length,
-        active: modules.filter(m => m.status === 'active').length,
-        categories: [...new Set(modules.map(m => m.category))]
-      },
-      prompts: {
-        total: prompts.length,
-        active: prompts.filter(p => p.isActive).length,
-        byCategory: prompts.reduce((acc, p) => {
-          acc[p.category] = (acc[p.category] || 0) + 1;
-          return acc;
-        }, {})
-      },
-      providers: providerStatus,
-      capabilities: [
-        'Purchase Order Extraction',
-        'Proforma Invoice Processing', 
-        'Supplier-Specific Intelligence (PTP)',
-        'Multi-Provider AI Support',
-        'Performance Analytics'
-      ],
-      version: '2.0.0-modular',
-      timestamp: new Date().toISOString()
-    };
+      const healthData = {
+        status: 'healthy',
+        system: 'HiggsFlow Modular AI',
+        modules: {
+          total: modules.length,
+          active: modules.filter(m => m.status === 'active').length,
+          categories: [...new Set(modules.map(m => m.category))]
+        },
+        prompts: {
+          total: prompts.length,
+          active: prompts.filter(p => p.isActive).length,
+          byCategory: promptStats.byCategory || {},
+          byProvider: promptStats.byProvider || {},
+          tested: promptStats.tested || 0,
+          averageAccuracy: promptStats.averageAccuracy || 0
+        },
+        providers: providerStatus,
+        firebase: {
+          enabled: true,
+          storage: 'firestore',
+          persistence: 'permanent'
+        },
+        capabilities: [
+          'Purchase Order Extraction',
+          'Proforma Invoice Processing', 
+          'Supplier-Specific Intelligence (PTP)',
+          'Multi-Provider AI Support',
+          'Performance Analytics',
+          'Firebase Persistence'
+        ],
+        version: '2.0.1-firebase-enhanced',
+        timestamp: new Date().toISOString()
+      };
 
-    // Emit health check event
-    this.emit('health_check', healthData);
+      // Emit health check event
+      this.emit('health_check', healthData);
 
-    return healthData;
+      return healthData;
+    } catch (error) {
+      console.error('❌ Health check failed:', error);
+      
+      const errorHealthData = {
+        status: 'degraded',
+        system: 'HiggsFlow Modular AI',
+        error: error.message,
+        version: '2.0.1-firebase-enhanced',
+        timestamp: new Date().toISOString()
+      };
+
+      this.emit('health_check', errorHealthData);
+      return errorHealthData;
+    }
   }
 
   // Quick test method
@@ -572,8 +647,8 @@ class UnifiedAIService extends EventEmitter {
       'performance_update',
       'module_updated',
       'prompt_saved',
-      'prompt_updated', // 🔧 NEW
-      'prompt_deleted', // 🔧 NEW
+      'prompt_updated',
+      'prompt_deleted',
       'prompt_tested',
       'health_check',
       'quick_test_complete',
