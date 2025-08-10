@@ -1,4 +1,4 @@
-// routes/api.routes.js - FIXED: Proper AI Service Integration
+// routes/api.routes.js - ENHANCED: Proper AI Service Integration with Prompt Selector
 const express = require('express');
 const router = express.Router();
 const upload = require('../config/multer');
@@ -80,6 +80,8 @@ async function getPromptsDirectly() {
         aiProvider: 'deepseek',
         temperature: 0.1,
         maxTokens: 2500,
+        description: 'Multi-manufacturer analysis and brand detection',
+        usage_count: 45,
         prompt: `You are an expert industrial product analyst specializing in manufacturer identification and product specifications.
 
 EXPERTISE AREAS:
@@ -124,6 +126,8 @@ OUTPUT ONLY VALID JSON:
         aiProvider: 'deepseek',
         temperature: 0.1,
         maxTokens: 2500,
+        description: 'Specialized analysis for Siemens industrial components',
+        usage_count: 23,
         prompt: `You are a Siemens industrial automation specialist with deep expertise in Siemens product lines.
 
 SIEMENS EXPERTISE:
@@ -168,6 +172,67 @@ OUTPUT ONLY VALID JSON:
   } catch (error) {
     console.error('❌ Failed to get prompts:', error);
     return [];
+  }
+}
+
+// ✅ NEW: Helper function to determine prompt specialization
+function getPromptSpecialization(name, description) {
+  const lowerName = name.toLowerCase();
+  const lowerDesc = (description || '').toLowerCase();
+  
+  if (lowerName.includes('siemens')) {
+    return 'Siemens Industrial Components (6XV, 6ES, 3SE series)';
+  } else if (lowerName.includes('skf')) {
+    return 'SKF Bearings and Mechanical Components';
+  } else if (lowerName.includes('abb')) {
+    return 'ABB Drives and Automation Equipment';
+  } else if (lowerName.includes('schneider')) {
+    return 'Schneider Electric Components';
+  } else if (lowerName.includes('brand detection')) {
+    return 'Multi-manufacturer analysis and brand detection';
+  } else if (lowerDesc.includes('general') || lowerDesc.includes('universal')) {
+    return 'General industrial components analysis';
+  } else {
+    return 'Industrial component enhancement';
+  }
+}
+
+// ✅ NEW: Helper function to calculate prompt confidence
+function calculatePromptConfidence(prompt) {
+  // Base confidence based on prompt type
+  let confidence = 0.85; // Base confidence
+  
+  const name = prompt.name.toLowerCase();
+  
+  // Specialized prompts typically have higher confidence
+  if (name.includes('specialist') || name.includes('siemens') || name.includes('skf')) {
+    confidence = 0.95;
+  } else if (name.includes('brand detection') || name.includes('analysis')) {
+    confidence = 0.88;
+  }
+  
+  // Adjust based on usage count (more usage = higher confidence)
+  const usageCount = prompt.usage_count || 0;
+  if (usageCount > 50) confidence = Math.min(confidence + 0.05, 0.98);
+  else if (usageCount > 20) confidence = Math.min(confidence + 0.02, 0.95);
+  
+  return confidence;
+}
+
+// ✅ NEW: Helper function to get recommended use cases
+function getRecommendedFor(name) {
+  const lowerName = name.toLowerCase();
+  
+  if (lowerName.includes('siemens')) {
+    return ['6XV', '6ES', '3SE', 'siemens'];
+  } else if (lowerName.includes('skf')) {
+    return ['NJ', 'NU', 'bearings', 'mechanical'];
+  } else if (lowerName.includes('abb')) {
+    return ['ACS', 'drives', 'automation'];
+  } else if (lowerName.includes('brand detection')) {
+    return ['unknown', 'multi-brand', 'general'];
+  } else {
+    return ['general', 'components'];
   }
 }
 
@@ -288,16 +353,17 @@ router.post('/detect-category', recommendationController.detectCategory);
 router.post('/bank-payments/extract', upload.single('file'), extractionController.extractBankPaymentSlip);
 
 // ================================================================
-// ✅ FIXED: PRODUCT ENHANCEMENT ENDPOINT - PROPER AI INTEGRATION
+// ✅ ENHANCED: PRODUCT ENHANCEMENT ENDPOINT WITH PROMPT SELECTOR SUPPORT
 // ================================================================
 
 router.post('/enhance-product', async (req, res) => {
   try {
-    const { productData, userEmail, metadata } = req.body;
+    const { productData, userEmail, metadata, forcedPromptId } = req.body; // ✅ NEW: Support forced prompt
     
     console.log('🚀 MCP Product Enhancement Request:', {
       partNumber: productData.partNumber,
       userEmail: userEmail,
+      forcedPromptId: forcedPromptId, // ✅ NEW: Log forced prompt
       timestamp: new Date().toISOString()
     });
     
@@ -316,15 +382,25 @@ router.post('/enhance-product', async (req, res) => {
         if (productPrompts && productPrompts.length > 0) {
           console.log(`📝 Found ${productPrompts.length} product enhancement prompts`);
           
-          // ✅ Smart prompt selection for Siemens parts
-          if (productData.partNumber && productData.partNumber.match(/^(6XV|6ES|3SE)/i)) {
+          // ✅ NEW: Support forced prompt selection
+          if (forcedPromptId) {
+            selectedPrompt = productPrompts.find(p => p.id === forcedPromptId);
+            if (selectedPrompt) {
+              console.log(`🎯 Using forced prompt: ${selectedPrompt.name}`);
+            } else {
+              console.warn(`⚠️ Forced prompt ${forcedPromptId} not found, falling back to smart selection`);
+            }
+          }
+          
+          // ✅ Smart prompt selection for Siemens parts (if no forced prompt)
+          if (!selectedPrompt && productData.partNumber && productData.partNumber.match(/^(6XV|6ES|3SE)/i)) {
             selectedPrompt = productPrompts.find(p => 
               p.name.toLowerCase().includes('siemens')
             );
             console.log('🎯 Looking for Siemens specialist prompt for Siemens part');
           }
           
-          // If no Siemens prompt found, or not a Siemens part, use general prompt
+          // If no specialized prompt found, use user-specific or general prompt
           if (!selectedPrompt) {
             selectedPrompt = productPrompts.find(p => 
               p.targetUsers && 
@@ -398,14 +474,15 @@ router.post('/enhance-product', async (req, res) => {
                   metadata: {
                     processing_time: `${processingTime}ms`,
                     prompt_used: selectedPrompt.name,
-                    prompt_id: selectedPrompt.id,
+                    prompt_id: selectedPrompt.id, // ✅ NEW: Include prompt ID
                     ai_provider: selectedPrompt.aiProvider,
                     mcp_version: '3.1',
                     extraction_method: 'unified_ai_enhancement',
                     user_email: userEmail,
                     timestamp: new Date().toISOString(),
                     enhancement_type: 'ai_analysis',
-                    original_part_number: productData.partNumber
+                    original_part_number: productData.partNumber,
+                    forced_prompt: !!forcedPromptId // ✅ NEW: Track if prompt was forced
                   },
                   confidence_score: confidenceScore,
                   
@@ -422,7 +499,8 @@ router.post('/enhance-product', async (req, res) => {
                   brand: extractedData.detected_brand,
                   confidence: confidenceScore,
                   processingTime: `${processingTime}ms`,
-                  prompt: selectedPrompt.name
+                  prompt: selectedPrompt.name,
+                  forced: !!forcedPromptId // ✅ NEW: Log if prompt was forced
                 });
                 
                 return res.json(response);
@@ -459,7 +537,8 @@ router.post('/enhance-product', async (req, res) => {
         user_email: userEmail,
         timestamp: new Date().toISOString(),
         enhancement_type: 'pattern_analysis',
-        fallback_reason: 'AI service unavailable or prompts not found'
+        fallback_reason: 'AI service unavailable or prompts not found',
+        forced_prompt: false
       },
       confidence_score: enhancedData.confidence || 0.8
     };
@@ -483,13 +562,14 @@ router.post('/enhance-product', async (req, res) => {
         ai_provider: 'none',
         extraction_method: 'error',
         timestamp: new Date().toISOString(),
-        error_type: error.name
+        error_type: error.name,
+        forced_prompt: false
       }
     });
   }
 });
 
-// ✅ FIXED: Product Enhancement Status Endpoint - Updated for UnifiedAI
+// ✅ ENHANCED: Product Enhancement Status Endpoint with Prompt Selector Support
 router.get('/product-enhancement-status', async (req, res) => {
   try {
     const { userEmail } = req.query;
@@ -502,6 +582,7 @@ router.get('/product-enhancement-status', async (req, res) => {
     let promptInfo = null;
     let systemStatus = 'pattern_fallback';
     let availablePrompts = 0;
+    let availablePromptsList = []; // ✅ NEW: Array for prompt selector
     
     try {
       const allPrompts = await getPromptsDirectly();
@@ -519,6 +600,20 @@ router.get('/product-enhancement-status', async (req, res) => {
           availablePrompts = productPrompts.length;
           console.log(`📝 Found ${productPrompts.length} product enhancement prompts`);
           
+          // ✅ NEW: Build available prompts list with metadata
+          availablePromptsList = productPrompts.map(prompt => ({
+            id: prompt.id,
+            name: prompt.name,
+            aiProvider: prompt.aiProvider || 'deepseek',
+            specialized_for: getPromptSpecialization(prompt.name, prompt.description),
+            confidence_avg: calculatePromptConfidence(prompt),
+            usage_count: prompt.usage_count || 0,
+            recommended_for: getRecommendedFor(prompt.name),
+            description: prompt.description || '',
+            targetUsers: prompt.targetUsers || [],
+            isActive: prompt.isActive !== false
+          }));
+          
           // Find user-specific prompt
           let userPrompt = productPrompts.find(p => 
             p.targetUsers && 
@@ -532,8 +627,9 @@ router.get('/product-enhancement-status', async (req, res) => {
           if (userPrompt) {
             promptInfo = {
               name: userPrompt.name,
-              ai_provider: userPrompt.aiProvider,
-              id: userPrompt.id
+              ai_provider: userPrompt.aiProvider || 'deepseek',
+              id: userPrompt.id,
+              specialized_for: getPromptSpecialization(userPrompt.name, userPrompt.description)
             };
             systemStatus = globalAIService ? 'unified_ai_enhanced' : 'mcp_enhanced';
             console.log(`🎯 Selected prompt: ${userPrompt.name}`);
@@ -544,13 +640,14 @@ router.get('/product-enhancement-status', async (req, res) => {
       console.warn('⚠️ Direct prompt access failed:', promptError.message);
     }
     
-    // ✅ Always return a successful response
+    // ✅ ENHANCED: Always return a successful response with prompt list
     const response = {
       status: 'available',
       user_email: userEmail,
       current_system: systemStatus,
       selected_prompt: promptInfo,
       available_prompts: availablePrompts,
+      available_prompts_list: availablePromptsList, // ✅ NEW: Full prompt list for selector
       capabilities: [
         'brand_detection',
         'category_classification', 
@@ -590,6 +687,7 @@ router.get('/product-enhancement-status', async (req, res) => {
       promptAvailable: !!promptInfo,
       userEmail,
       availablePrompts,
+      promptsListLength: availablePromptsList.length,
       aiServiceReady: !!globalAIService
     });
     
@@ -606,6 +704,7 @@ router.get('/product-enhancement-status', async (req, res) => {
       message: 'Using pattern-based enhancement',
       selected_prompt: null,
       available_prompts: 0,
+      available_prompts_list: [], // ✅ NEW: Empty array for fallback
       capabilities: ['basic_brand_detection', 'category_classification', 'pattern_analysis'],
       performance: {
         typical_response_time: '1-2 seconds',
@@ -645,7 +744,8 @@ router.get('/product-enhancement-health', async (req, res) => {
         unified_ai_enhancement: !!globalAIService,
         legacy_ai_enhancement: !!AIService,
         pattern_analysis: true,
-        fallback_protection: true
+        fallback_protection: true,
+        prompt_selector: true // ✅ NEW: Indicate prompt selector support
       }
     };
     
