@@ -1,10 +1,12 @@
+// supplier-mcp-server/services/webSearchService.js
 const axios = require('axios');
 const cheerio = require('cheerio');
 
 class WebSearchService {
   constructor() {
     this.serpApiKey = process.env.SERPAPI_KEY;
-    this.timeout = 10000; // 10 seconds
+    this.timeout = 15000; // 15 seconds
+    this.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36';
   }
 
   /**
@@ -12,23 +14,25 @@ class WebSearchService {
    */
   async searchProductInfo(partNumber, brand = '', description = '') {
     try {
-      console.log(`🔍 Starting web search for: ${partNumber}`);
+      console.log(`🔍 Starting web search for: ${partNumber} (Brand: ${brand})`);
       
       const searchMethods = [
         () => this.searchWithSerpAPI(partNumber, brand),
         () => this.searchWithDirectWebScraping(partNumber, brand),
+        () => this.searchWithPuppeteer(partNumber, brand),
         () => this.searchWithFallbackMethod(partNumber)
       ];
 
-      for (const method of searchMethods) {
+      for (const [index, method] of searchMethods.entries()) {
         try {
+          console.log(`🔍 Trying search method ${index + 1}...`);
           const result = await method();
           if (result.found) {
             console.log(`✅ Web search successful: ${result.source}`);
             return result;
           }
         } catch (error) {
-          console.warn(`⚠️ Search method failed:`, error.message);
+          console.warn(`⚠️ Search method ${index + 1} failed:`, error.message);
         }
       }
 
@@ -58,12 +62,16 @@ class WebSearchService {
 
     const query = brand ? `"${partNumber}" ${brand} specifications datasheet` : `"${partNumber}" industrial component datasheet`;
     
+    console.log(`🔍 SerpAPI search: ${query}`);
+    
     const response = await axios.get('https://serpapi.com/search', {
       params: {
         engine: 'google',
         q: query,
         api_key: this.serpApiKey,
-        num: 10
+        num: 5,
+        gl: 'us',
+        hl: 'en'
       },
       timeout: this.timeout
     });
@@ -72,17 +80,20 @@ class WebSearchService {
     
     if (results.length > 0) {
       const topResult = results[0];
+      console.log(`✅ SerpAPI found result: ${topResult.title}`);
+      
       const extractedInfo = await this.extractProductInfoFromPage(topResult.link);
       
       return {
         found: true,
         source: 'SerpAPI Google Search',
-        confidence: 0.8,
+        confidence: 0.85,
         productName: extractedInfo.productName || topResult.title,
         description: extractedInfo.description || topResult.snippet,
         specifications: extractedInfo.specifications || {},
         datasheetUrl: topResult.link,
-        searchQuery: query
+        searchQuery: query,
+        additionalUrls: results.slice(1, 3).map(r => ({ title: r.title, url: r.link }))
       };
     }
 
@@ -103,7 +114,11 @@ class WebSearchService {
         const response = await axios.get(searchUrl, {
           timeout: this.timeout,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': this.userAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive'
           }
         });
 
@@ -111,6 +126,7 @@ class WebSearchService {
         const productInfo = site.extractor($, partNumber);
         
         if (productInfo.found) {
+          console.log(`✅ Direct scraping successful: ${site.name}`);
           return {
             found: true,
             source: `${site.name} Direct Search`,
@@ -127,17 +143,171 @@ class WebSearchService {
   }
 
   /**
+   * Advanced search using Puppeteer for JavaScript-heavy sites
+   */
+  async searchWithPuppeteer(partNumber, brand) {
+    let browser = null;
+    
+    try {
+      const puppeteer = require('puppeteer');
+      
+      console.log(`🔍 Starting Puppeteer search for: ${partNumber}`);
+      
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ]
+      });
+
+      const page = await browser.newPage();
+      await page.setUserAgent(this.userAgent);
+      
+      // Search DuckDuckGo as it's more permissive
+      const searchQuery = `"${partNumber}" ${brand || ''} specifications datasheet`;
+      const searchUrl = `https://duckduckgo.com/?q=${encodeURIComponent(searchQuery)}`;
+      
+      console.log(`🔍 Puppeteer navigating to: ${searchUrl}`);
+      
+      await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+      
+      // Wait for results to load
+      await page.waitForSelector('[data-testid="result"]', { timeout: 10000 });
+      
+      // Extract search results
+      const results = await page.evaluate(() => {
+        const resultElements = document.querySelectorAll('[data-testid="result"]');
+        const results = [];
+        
+        for (let i = 0; i < Math.min(resultElements.length, 3); i++) {
+          const element = resultElements[i];
+          const titleElement = element.querySelector('h2 a');
+          const snippetElement = element.querySelector('[data-result="snippet"]');
+          
+          if (titleElement) {
+            results.push({
+              title: titleElement.textContent.trim(),
+              url: titleElement.href,
+              snippet: snippetElement ? snippetElement.textContent.trim() : ''
+            });
+          }
+        }
+        
+        return results;
+      });
+      
+      if (results.length > 0) {
+        const topResult = results[0];
+        console.log(`✅ Puppeteer found result: ${topResult.title}`);
+        
+        // Try to extract more detailed info from the top result
+        const extractedInfo = await this.extractProductInfoWithPuppeteer(page, topResult.url);
+        
+        return {
+          found: true,
+          source: 'Puppeteer Web Search',
+          confidence: 0.75,
+          productName: extractedInfo.productName || topResult.title,
+          description: extractedInfo.description || topResult.snippet,
+          specifications: extractedInfo.specifications || {},
+          datasheetUrl: topResult.url,
+          searchQuery: searchQuery,
+          additionalUrls: results.slice(1).map(r => ({ title: r.title, url: r.url }))
+        };
+      }
+
+      throw new Error('No Puppeteer results found');
+      
+    } catch (error) {
+      console.warn('Puppeteer search failed:', error.message);
+      throw error;
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+  }
+
+  /**
+   * Extract detailed product info using Puppeteer
+   */
+  async extractProductInfoWithPuppeteer(page, url) {
+    try {
+      console.log(`🔍 Extracting detailed info from: ${url}`);
+      
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+      
+      const extractedData = await page.evaluate(() => {
+        // Extract title
+        const productName = document.querySelector('h1')?.textContent?.trim() ||
+                           document.querySelector('title')?.textContent?.trim() ||
+                           'Product information found';
+
+        // Extract description
+        const description = document.querySelector('meta[name="description"]')?.getAttribute('content') ||
+                           document.querySelector('.description')?.textContent?.trim() ||
+                           document.querySelector('p')?.textContent?.trim() ||
+                           'Product specifications available';
+
+        // Extract specifications using common patterns
+        const specifications = {};
+        const pageText = document.body.textContent || '';
+        
+        // Common specification patterns
+        const specPatterns = {
+          voltage: /(?:voltage|volt)[:\s]*(\d+(?:\.\d+)?)\s*(?:v|volt)/i,
+          dimensions: /(?:dimensions?|size)[:\s]*([0-9x\s\.]+(?:mm|cm|inch))/i,
+          weight: /(?:weight|mass)[:\s]*([0-9\.]+\s*(?:kg|g|lb|oz))/i,
+          material: /(?:material|made of)[:\s]*([a-z\s]+)(?:\.|,|$)/i,
+          temperature: /(?:temperature|temp)[:\s]*(-?\d+(?:\.\d+)?)\s*(?:°|deg|degrees)?(?:c|f|celsius|fahrenheit)/i
+        };
+
+        Object.entries(specPatterns).forEach(([key, pattern]) => {
+          const match = pageText.match(pattern);
+          if (match) {
+            specifications[key] = match[1].trim();
+          }
+        });
+
+        return {
+          productName: productName.substring(0, 200),
+          description: description.substring(0, 500),
+          specifications
+        };
+      });
+
+      return extractedData;
+      
+    } catch (error) {
+      console.warn('Failed to extract detailed info:', error.message);
+      return {
+        productName: '',
+        description: '',
+        specifications: {}
+      };
+    }
+  }
+
+  /**
    * Fallback search using general web scraping
    */
   async searchWithFallbackMethod(partNumber) {
-    // Simple DuckDuckGo search as fallback
-    const searchUrl = `https://duckduckgo.com/html/?q="${partNumber}"+datasheet+specifications`;
-    
     try {
+      const searchUrl = `https://duckduckgo.com/html/?q="${partNumber}"+datasheet+specifications`;
+      
+      console.log(`🔍 Fallback search: ${searchUrl}`);
+      
       const response = await axios.get(searchUrl, {
         timeout: this.timeout,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': this.userAgent
         }
       });
 
@@ -148,14 +318,17 @@ class WebSearchService {
         const title = firstResult.text().trim();
         const link = firstResult.attr('href');
         
+        console.log(`✅ Fallback found result: ${title}`);
+        
         return {
           found: true,
           source: 'DuckDuckGo Fallback',
-          confidence: 0.5,
+          confidence: 0.6,
           productName: title,
           description: `Product information for ${partNumber}`,
           datasheetUrl: link,
-          specifications: {}
+          specifications: {},
+          searchQuery: `"${partNumber}" datasheet specifications`
         };
       }
     } catch (error) {
@@ -166,14 +339,16 @@ class WebSearchService {
   }
 
   /**
-   * Extract product information from webpage
+   * Extract product information from webpage using Cheerio
    */
   async extractProductInfoFromPage(url) {
     try {
+      console.log(`🔍 Extracting info from: ${url}`);
+      
       const response = await axios.get(url, {
         timeout: this.timeout,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': this.userAgent
         }
       });
 
@@ -199,7 +374,8 @@ class WebSearchService {
         voltage: /(?:voltage|volt)[:\s]*(\d+(?:\.\d+)?)\s*(?:v|volt)/i,
         dimensions: /(?:dimensions?|size)[:\s]*([0-9x\s\.]+(?:mm|cm|inch))/i,
         weight: /(?:weight|mass)[:\s]*([0-9\.]+\s*(?:kg|g|lb|oz))/i,
-        material: /(?:material|made of)[:\s]*([a-z\s]+)(?:\.|,|$)/i
+        material: /(?:material|made of)[:\s]*([a-z\s]+)(?:\.|,|$)/i,
+        temperature: /(?:temperature|temp)[:\s]*(-?\d+(?:\.\d+)?)\s*(?:°|deg|degrees)?(?:c|f)/i
       };
 
       Object.entries(specPatterns).forEach(([key, pattern]) => {
@@ -210,7 +386,7 @@ class WebSearchService {
       });
 
       return {
-        productName: productName.substring(0, 200), // Limit length
+        productName: productName.substring(0, 200),
         description: description.substring(0, 500),
         specifications
       };
@@ -232,16 +408,21 @@ class WebSearchService {
     const sites = {
       'SIEMENS': {
         name: 'Siemens',
-        searchUrl: 'https://mall.industry.siemens.com/search?q={partNumber}',
+        searchUrl: 'https://mall.industry.siemens.com/mall/en/WW/Catalog/Products?search={partNumber}',
         extractor: ($, partNumber) => {
-          const productCard = $('.product-card').first();
+          const productCard = $('.productTile, .product-item, .search-result-item').first();
           if (productCard.length > 0) {
-            return {
-              found: true,
-              productName: productCard.find('.product-title').text().trim(),
-              description: productCard.find('.product-description').text().trim(),
-              specifications: {}
-            };
+            const title = productCard.find('h3, h4, .title, .product-title').first().text().trim();
+            const description = productCard.find('.description, .product-description').first().text().trim();
+            
+            if (title && title.toLowerCase().includes(partNumber.toLowerCase())) {
+              return {
+                found: true,
+                productName: title,
+                description: description || `Siemens industrial component ${partNumber}`,
+                specifications: { brand: 'Siemens', category: 'Industrial Automation' }
+              };
+            }
           }
           return { found: false };
         }
@@ -250,22 +431,41 @@ class WebSearchService {
         name: 'ABB',
         searchUrl: 'https://search.abb.com/library/Download.aspx?DocumentID={partNumber}',
         extractor: ($, partNumber) => {
-          // ABB-specific extraction logic
+          const resultItem = $('.search-result, .document-item').first();
+          if (resultItem.length > 0) {
+            return {
+              found: true,
+              productName: `ABB Component ${partNumber}`,
+              description: resultItem.text().trim() || `ABB industrial component ${partNumber}`,
+              specifications: { brand: 'ABB', category: 'Power and Automation' }
+            };
+          }
           return { found: false };
         }
       },
       'SKF': {
         name: 'SKF',
-        searchUrl: 'https://www.skf.com/us/products?query={partNumber}',
+        searchUrl: 'https://www.skf.com/us/products?text={partNumber}',
         extractor: ($, partNumber) => {
-          // SKF-specific extraction logic
+          const productItem = $('.product-item, .search-result').first();
+          if (productItem.length > 0) {
+            const title = productItem.find('h3, h4, .title').first().text().trim();
+            if (title && title.toLowerCase().includes(partNumber.toLowerCase())) {
+              return {
+                found: true,
+                productName: title,
+                description: `SKF bearing component ${partNumber}`,
+                specifications: { brand: 'SKF', category: 'Bearings' }
+              };
+            }
+          }
           return { found: false };
         }
       }
     };
 
-    const brandUpper = brand.toUpperCase();
-    return sites[brandUpper] ? [sites[brandUpper]] : [];
+    const brandUpper = brand?.toUpperCase();
+    return brandUpper && sites[brandUpper] ? [sites[brandUpper]] : [];
   }
 }
 
