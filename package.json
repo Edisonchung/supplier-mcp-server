@@ -13,7 +13,9 @@
     "ai",
     "extraction",
     "supplier",
-    "management"
+    "management",
+    "web-search",
+    "product-enhancement"
   ],
   "author": "",
   "license": "ISC",
@@ -41,7 +43,13 @@
     "tesseract.js": "^4.0.2",
     "uuid": "^11.1.0",
     "ws": "^8.18.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    
+    "_comment": "Web Search Dependencies for Product Enhancement",
+    "cheerio": "^1.0.0-rc.12",
+    "puppeteer": "^21.11.0",
+    "serpapi": "^2.0.1",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
