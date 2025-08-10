@@ -8,7 +8,7 @@ dotenv.config();
 
 // 🆕 ADD: Firebase initialization for prompt persistence
 const { initializeApp } = require('firebase/app');
-const { getFirestore } = require('firebase/firestore');
+const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp } = require('firebase/firestore');
 
 // Initialize Firebase for the backend
 const firebaseConfig = {
@@ -63,8 +63,317 @@ app.use((req, res, next) => {
   res.setHeader('X-Modular-AI-Enabled', 'true');
   res.setHeader('X-MCP-Version', '2.0.0');
   res.setHeader('X-MCP-WebSocket', `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
-  res.setHeader('X-Firebase-Enabled', firebaseApp ? 'true' : 'false'); // 🆕 ADD: Firebase status header
+  res.setHeader('X-Firebase-Enabled', firebaseApp ? 'true' : 'false');
   next();
+});
+
+// ✅ NEW: Category Management Routes
+// Initialize default categories
+const initializeDefaultCategories = async () => {
+  if (!db) {
+    console.warn('⚠️ Firebase not available, skipping category initialization');
+    return;
+  }
+
+  try {
+    const categoriesRef = collection(db, 'categories');
+    const snapshot = await getDocs(categoriesRef);
+    
+    if (snapshot.empty) {
+      console.log('🆕 Initializing default categories...');
+      
+      const defaultCategories = [
+        {
+          id: 'purchase_order',
+          name: 'Purchase Order',
+          description: 'Purchase order processing and extraction',
+          color: '#3B82F6',
+          isSystem: true,
+          sortOrder: 10,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'proforma_invoice',
+          name: 'Proforma Invoice',
+          description: 'Proforma invoice processing and analysis',
+          color: '#06B6D4',
+          isSystem: true,
+          sortOrder: 20,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'bank_payment',
+          name: 'Bank Payment',
+          description: 'Bank payment processing and reconciliation',
+          color: '#8B5CF6',
+          isSystem: true,
+          sortOrder: 30,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'extraction',
+          name: 'Extraction',
+          description: 'General document data extraction',
+          color: '#3B82F6',
+          isSystem: true,
+          sortOrder: 40,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'supplier_specific',
+          name: 'Supplier Specific',
+          description: 'Supplier-focused extraction and analysis',
+          color: '#8B5CF6',
+          isSystem: true,
+          sortOrder: 50,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'analytics',
+          name: 'Analytics',
+          description: 'Data analysis and business insights',
+          color: '#10B981',
+          isSystem: true,
+          sortOrder: 60,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'classification',
+          name: 'Classification',
+          description: 'Document type classification and routing',
+          color: '#EF4444',
+          isSystem: true,
+          sortOrder: 70,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        },
+        {
+          id: 'general',
+          name: 'General',
+          description: 'General purpose AI prompts',
+          color: '#6B7280',
+          isSystem: true,
+          sortOrder: 80,
+          promptCount: 0,
+          createdAt: serverTimestamp(),
+          createdBy: 'System'
+        }
+      ];
+
+      for (const category of defaultCategories) {
+        const docRef = doc(db, 'categories', category.id);
+        await updateDoc(docRef, category).catch(async () => {
+          // Document doesn't exist, create it
+          await addDoc(collection(db, 'categories'), category);
+        });
+      }
+      
+      console.log('✅ Default categories initialized successfully');
+    } else {
+      console.log('✅ Categories already exist, skipping initialization');
+    }
+  } catch (error) {
+    console.error('❌ Failed to initialize categories:', error);
+  }
+};
+
+// Category CRUD endpoints
+app.get('/api/categories', async (req, res) => {
+  try {
+    if (!db) {
+      // Fallback categories when Firebase is not available
+      return res.json([
+        { id: 'extraction', name: 'Extraction', description: 'Document data extraction', color: '#3B82F6' },
+        { id: 'supplier_specific', name: 'Supplier Specific', description: 'Supplier-focused prompts', color: '#8B5CF6' },
+        { id: 'analytics', name: 'Analytics', description: 'Data analysis and insights', color: '#10B981' },
+        { id: 'product_enhancement', name: 'Product Enhancement', description: 'AI-powered product analysis', color: '#F59E0B' },
+        { id: 'purchase_order', name: 'Purchase Order', description: 'Purchase order processing', color: '#3B82F6' },
+        { id: 'proforma_invoice', name: 'Proforma Invoice', description: 'Proforma invoice processing', color: '#06B6D4' },
+        { id: 'bank_payment', name: 'Bank Payment', description: 'Bank payment processing', color: '#8B5CF6' },
+        { id: 'classification', name: 'Classification', description: 'Document classification', color: '#EF4444' },
+        { id: 'general', name: 'General', description: 'General purpose prompts', color: '#6B7280' }
+      ]);
+    }
+
+    const categoriesRef = collection(db, 'categories');
+    const q = query(categoriesRef, orderBy('sortOrder', 'asc'));
+    const snapshot = await getDocs(q);
+    
+    const categories = [];
+    snapshot.forEach((doc) => {
+      categories.push({ 
+        id: doc.id, 
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate?.()?.toISOString() || new Date().toISOString()
+      });
+    });
+    
+    res.json(categories);
+  } catch (error) {
+    console.error('❌ Error fetching categories:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch categories', 
+      details: error.message 
+    });
+  }
+});
+
+app.post('/api/categories', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ 
+        error: 'Firebase not available', 
+        message: 'Category creation requires Firebase configuration' 
+      });
+    }
+
+    const { name, description, color, userEmail } = req.body;
+    
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+
+    // Generate ID from name
+    const categoryId = name.toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/\s+/g, '_')
+      .substring(0, 50);
+
+    // Get current max sort order
+    const categoriesRef = collection(db, 'categories');
+    const snapshot = await getDocs(categoriesRef);
+    let maxSortOrder = 80; // Start after system categories
+    
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      if (data.sortOrder > maxSortOrder) {
+        maxSortOrder = data.sortOrder;
+      }
+    });
+
+    const categoryData = {
+      id: categoryId,
+      name: name.trim(),
+      description: description?.trim() || '',
+      color: color || '#8B5CF6',
+      isSystem: false,
+      sortOrder: maxSortOrder + 10,
+      promptCount: 0,
+      createdAt: serverTimestamp(),
+      createdBy: userEmail || 'Unknown User',
+      updatedAt: serverTimestamp()
+    };
+
+    // Create the document with the specific ID
+    const docRef = doc(db, 'categories', categoryId);
+    await updateDoc(docRef, categoryData).catch(async () => {
+      // Document doesn't exist, create it
+      await addDoc(collection(db, 'categories'), categoryData);
+    });
+    
+    console.log(`✅ Category created: ${name} (${categoryId})`);
+    
+    res.json({
+      success: true,
+      message: 'Category created successfully',
+      category: { id: categoryId, ...categoryData }
+    });
+  } catch (error) {
+    console.error('❌ Error creating category:', error);
+    res.status(500).json({ 
+      error: 'Failed to create category', 
+      details: error.message 
+    });
+  }
+});
+
+app.put('/api/categories/:id', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ 
+        error: 'Firebase not available', 
+        message: 'Category updates require Firebase configuration' 
+      });
+    }
+
+    const categoryId = req.params.id;
+    const { name, description, color } = req.body;
+    
+    const updateData = {
+      updatedAt: serverTimestamp()
+    };
+    
+    if (name) updateData.name = name.trim();
+    if (description !== undefined) updateData.description = description.trim();
+    if (color) updateData.color = color;
+
+    const docRef = doc(db, 'categories', categoryId);
+    await updateDoc(docRef, updateData);
+    
+    console.log(`✅ Category updated: ${categoryId}`);
+    
+    res.json({
+      success: true,
+      message: 'Category updated successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error updating category:', error);
+    res.status(500).json({ 
+      error: 'Failed to update category', 
+      details: error.message 
+    });
+  }
+});
+
+app.delete('/api/categories/:id', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({ 
+        error: 'Firebase not available', 
+        message: 'Category deletion requires Firebase configuration' 
+      });
+    }
+
+    const categoryId = req.params.id;
+    
+    // Check if category is system category
+    const docRef = doc(db, 'categories', categoryId);
+    const docSnap = await getDocs(docRef);
+    
+    if (docSnap.exists() && docSnap.data().isSystem) {
+      return res.status(400).json({ 
+        error: 'Cannot delete system category' 
+      });
+    }
+
+    await deleteDoc(docRef);
+    
+    console.log(`✅ Category deleted: ${categoryId}`);
+    
+    res.json({
+      success: true,
+      message: 'Category deleted successfully'
+    });
+  } catch (error) {
+    console.error('❌ Error deleting category:', error);
+    res.status(500).json({ 
+      error: 'Failed to delete category', 
+      details: error.message 
+    });
+  }
 });
 
 // Routes
@@ -101,13 +410,26 @@ app.get('/health', async (req, res) => {
     
     // 🆕 ADD: Firebase/Prompt system health
     let promptSystemHealth = { status: 'error', storage: 'fallback' };
+    let categorySystemHealth = { status: 'error', storage: 'fallback' };
     try {
       if (firebaseApp && db) {
         // Try to access Firestore to verify connection
         const { collection, getDocs, limit, query } = require('firebase/firestore');
         const testQuery = query(collection(db, 'ai-prompts'), limit(1));
         await getDocs(testQuery);
+        
+        // Test categories collection
+        const categoriesQuery = query(collection(db, 'categories'), limit(1));
+        await getDocs(categoriesQuery);
+        
         promptSystemHealth = { 
+          status: 'active', 
+          storage: 'firestore', 
+          connection: 'verified',
+          database: firebaseConfig.projectId
+        };
+        
+        categorySystemHealth = { 
           status: 'active', 
           storage: 'firestore', 
           connection: 'verified',
@@ -117,6 +439,11 @@ app.get('/health', async (req, res) => {
     } catch (firebaseError) {
       console.warn('Firebase health check failed:', firebaseError.message);
       promptSystemHealth = { 
+        status: 'degraded', 
+        storage: 'fallback', 
+        error: firebaseError.message 
+      };
+      categorySystemHealth = { 
         status: 'degraded', 
         storage: 'fallback', 
         error: firebaseError.message 
@@ -131,8 +458,9 @@ app.get('/health', async (req, res) => {
         modularAI: aiHealth.status,
         mcp: mcpStatus.status,
         ai: 'active',
-        promptSystem: promptSystemHealth.status, // 🆕 ADD: Prompt system status
-        firebase: firebaseApp ? 'active' : 'disabled' // 🆕 ADD: Firebase status
+        promptSystem: promptSystemHealth.status,
+        categorySystem: categorySystemHealth.status, // ✅ NEW: Category system status
+        firebase: firebaseApp ? 'active' : 'disabled'
       },
       ai: {
         modules: aiHealth.modules,
@@ -155,6 +483,20 @@ app.get('/health', async (req, res) => {
         status: promptSystemHealth.status,
         error: promptSystemHealth.error || null
       },
+      // ✅ NEW: Category system details
+      categorySystem: {
+        storage: categorySystemHealth.storage,
+        persistence: categorySystemHealth.storage === 'firestore' ? 'permanent' : 'temporary',
+        database: categorySystemHealth.database || 'none',
+        status: categorySystemHealth.status,
+        error: categorySystemHealth.error || null,
+        endpoints: {
+          list: '/api/categories',
+          create: 'POST /api/categories',
+          update: 'PUT /api/categories/:id',
+          delete: 'DELETE /api/categories/:id'
+        }
+      },
       // 🆕 ADD: Firebase details
       firebase: {
         enabled: !!firebaseApp,
@@ -172,12 +514,13 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase', // 🆕 UPDATE: Version to indicate Firebase support
+      version: '2.0.0-mcp-enhanced-firebase-categories', // ✅ NEW: Updated version
       endpoints: {
         health: '/health',
         api: '/api',
         ai: '/api/ai',
         mcp: '/api/mcp',
+        categories: '/api/categories', // ✅ NEW: Category endpoints
         aiDocs: '/api/ai/docs',
         mcpDocs: '/api/mcp/docs',
         extraction: '/api/purchase-orders/extract',
@@ -199,8 +542,10 @@ app.get('/health', async (req, res) => {
         batchProcessing: true,
         streamingSupport: true,
         websocketCommunication: true,
-        persistentPrompts: promptSystemHealth.storage === 'firestore', // 🆕 ADD: Prompt persistence feature
-        firebaseIntegration: !!firebaseApp // 🆕 ADD: Firebase integration feature
+        persistentPrompts: promptSystemHealth.storage === 'firestore',
+        persistentCategories: categorySystemHealth.storage === 'firestore', // ✅ NEW: Category persistence
+        firebaseIntegration: !!firebaseApp,
+        dynamicCategoryManagement: !!firebaseApp // ✅ NEW: Dynamic categories feature
       }
     });
   } catch (error) {
@@ -214,6 +559,7 @@ app.get('/health', async (req, res) => {
         mcp: 'error',
         ai: 'active',
         promptSystem: 'error',
+        categorySystem: 'error',
         firebase: 'error'
       },
       timeouts: {
@@ -222,7 +568,7 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase',
+      version: '2.0.0-mcp-enhanced-firebase-categories',
       ai_status: 'initializing',
       error: error.message
     });
@@ -232,8 +578,8 @@ app.get('/health', async (req, res) => {
 // Enhanced root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP & Firebase',
-    version: '2.0.0-mcp-enhanced-firebase', // 🆕 UPDATE: Version
+    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP, Firebase & Category Management',
+    version: '2.0.0-mcp-enhanced-firebase-categories', // ✅ NEW: Updated version
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
@@ -245,14 +591,16 @@ app.get('/', (req, res) => {
       'Advanced tool orchestration',
       'Batch processing',
       'Streaming processes',
-      'Persistent prompt storage (Firebase)', // 🆕 ADD: Firebase feature
-      'Zero data loss on deployments' // 🆕 ADD: Persistence benefit
+      'Persistent prompt storage (Firebase)',
+      'Dynamic category management', // ✅ NEW: Category feature
+      'Zero data loss on deployments'
     ],
     endpoints: {
       health: '/health',
       api: '/api',
       ai: '/api/ai',
       mcp: '/api/mcp',
+      categories: '/api/categories', // ✅ NEW: Category endpoint
       extraction: '/api/purchase-orders/extract',
       bankPaymentExtraction: '/api/bank-payments/extract',
       enhancedPOExtraction: '/api/ai/extract/purchase-order',
@@ -269,8 +617,26 @@ app.get('/', (req, res) => {
     // 🆕 ADD: Persistence information
     persistence: {
       prompts: firebaseApp ? 'Firebase Firestore (permanent)' : 'File storage (temporary)',
+      categories: firebaseApp ? 'Firebase Firestore (permanent)' : 'Fallback data (temporary)', // ✅ NEW: Category persistence
       dataLoss: firebaseApp ? 'Protected from deployment resets' : 'May be lost on deployment',
       database: firebaseConfig.projectId || 'none'
+    },
+    // ✅ NEW: Category management information
+    categoryManagement: {
+      enabled: !!firebaseApp,
+      endpoints: {
+        list: 'GET /api/categories',
+        create: 'POST /api/categories',
+        update: 'PUT /api/categories/:id',
+        delete: 'DELETE /api/categories/:id'
+      },
+      features: [
+        'Create custom categories',
+        'Color-coded organization',
+        'System vs user categories',
+        'Persistent storage',
+        'Real-time updates'
+      ]
     }
   });
 });
@@ -322,6 +688,15 @@ app.use((err, req, res, next) => {
     });
   }
   
+  // ✅ NEW: Category-specific errors
+  if (err.message && err.message.includes('Category')) {
+    return res.status(500).json({
+      success: false,
+      message: 'Category management error: ' + err.message,
+      context: 'category_service'
+    });
+  }
+  
   res.status(500).json({
     success: false,
     message: err.message || 'Internal server error'
@@ -337,23 +712,36 @@ app.use((req, res) => {
 });
 
 // Start server with enhanced logging
-const server = app.listen(PORT, () => {
-  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase) is running on port ${PORT}`);
+const server = app.listen(PORT, async () => {
+  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase + Categories) is running on port ${PORT}`);
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`);
+  
+  // Initialize categories after server starts
+  if (firebaseApp && db) {
+    await initializeDefaultCategories();
+  }
   
   // 🆕 ADD: Firebase status logging
   console.log('\n🔥 Firebase Integration Status:');
   if (firebaseApp && db) {
     console.log(`   ✅ Firebase connected to project: ${firebaseConfig.projectId}`);
     console.log(`   ✅ Firestore database ready for prompt persistence`);
-    console.log(`   ✅ Prompts will survive all deployments`);
+    console.log(`   ✅ Category management system active`);
+    console.log(`   ✅ Prompts and categories will survive all deployments`);
   } else {
     console.log(`   ⚠️  Firebase not configured - prompts may be lost on deployment`);
     console.log(`   💡 Add Firebase environment variables to enable persistence`);
   }
+  
+  // ✅ NEW: Category management endpoints
+  console.log('\n📁 Category Management endpoints:');
+  console.log(`   📋 GET  http://localhost:${PORT}/api/categories - List all categories`);
+  console.log(`   ➕ POST http://localhost:${PORT}/api/categories - Create new category`);
+  console.log(`   ✏️  PUT  http://localhost:${PORT}/api/categories/:id - Update category`);
+  console.log(`   🗑️  DEL  http://localhost:${PORT}/api/categories/:id - Delete category`);
   
   // Log AI endpoints
   console.log('\n🤖 Modular AI endpoints:');
@@ -425,11 +813,11 @@ const server = app.listen(PORT, () => {
   // 🆕 ADD: Firebase configuration check
   if (missingFirebase.length > 0) {
     console.log('\n⚠️  Firebase configuration incomplete:');
-    console.log('   Missing variables (prompts may be lost on deployment):');
+    console.log('   Missing variables (prompts & categories may be lost on deployment):');
     missingFirebase.forEach(envVar => {
       console.log(`   - ${envVar}`);
     });
-    console.log('\n💡 To enable persistent prompt storage, add these to Railway:');
+    console.log('\n💡 To enable persistent storage, add these to Railway:');
     console.log('   FIREBASE_API_KEY=AIzaSyBxNZe2RYL1vJZgu93C3zdz2r0J-lDYgCY');
     console.log('   FIREBASE_AUTH_DOMAIN=higgsflow-b9f81.firebaseapp.com');
     console.log('   FIREBASE_PROJECT_ID=higgsflow-b9f81');
@@ -437,7 +825,7 @@ const server = app.listen(PORT, () => {
     console.log('   FIREBASE_MESSAGING_SENDER_ID=717201513347');
     console.log('   FIREBASE_APP_ID=1:717201513347:web:86abc12a7dcebe914834b6');
   } else {
-    console.log('✅ Firebase configuration complete - prompts will persist');
+    console.log('✅ Firebase configuration complete - prompts & categories will persist');
   }
   
   console.log('\n🎯 Features enabled:');
@@ -452,11 +840,13 @@ const server = app.listen(PORT, () => {
   console.log('   ✅ Advanced AI tool orchestration');
   console.log('   ✅ Batch processing capabilities');
   console.log('   ✅ Streaming process support');
-  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Persistent prompt storage (Firebase)`); // 🆕 ADD: Firebase feature status
-  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Zero data loss on deployments`); // 🆕 ADD: Persistence benefit status
+  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Persistent prompt storage (Firebase)`);
+  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Dynamic category management (Firebase)`); // ✅ NEW: Category feature status
+  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Zero data loss on deployments`);
   
-  console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase) ready for testing!');
+  console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase + Categories) ready for testing!');
   console.log(`   Test: curl http://localhost:${PORT}/api/mcp/status`);
+  console.log(`   Categories: curl http://localhost:${PORT}/api/categories`); // ✅ NEW: Category test
   console.log(`   Docs: http://localhost:${PORT}/api/mcp/docs`);
   console.log(`   WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
   console.log(`   Firebase: ${firebaseApp ? 'Connected' : 'Not configured'}`);
