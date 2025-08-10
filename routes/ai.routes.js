@@ -1,4 +1,4 @@
-//routes/ai.routes.js - UPDATED WITH MISSING ENDPOINTS
+//routes/ai.routes.js - UPDATED WITH DEBUG AND FIREBASE INTEGRATION
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -51,28 +51,276 @@ router.get('/modules/:moduleId', aiController.getModule.bind(aiController));
 // PUT /api/ai/modules/:moduleId - Update module
 router.put('/modules/:moduleId', aiController.updateModule.bind(aiController));
 
-// === Prompt Management (FIXED) ===
+// === Prompt Management with Enhanced Error Handling ===
 
 // GET /api/ai/prompts - Get all prompts (optionally filtered by moduleId)
-router.get('/prompts', aiController.getAllPrompts.bind(aiController));
+router.get('/prompts', async (req, res) => {
+  try {
+    console.log('📋 GET /api/ai/prompts called');
+    return await aiController.getAllPrompts(req, res);
+  } catch (error) {
+    console.error('❌ GET /prompts error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: 'GET /api/ai/prompts'
+    });
+  }
+});
 
-// POST /api/ai/prompts - Create new prompt
-router.post('/prompts', aiController.savePrompt.bind(aiController));
+// 🔧 DEBUG: Add debug route for troubleshooting
+router.post('/prompts/debug', async (req, res) => {
+  try {
+    console.log('🔍 Debug route called with body:', req.body);
+    
+    // Test if UnifiedAIService exists
+    const UnifiedAIService = require('../services/ai/UnifiedAIService');
+    console.log('✅ UnifiedAIService loaded');
+    
+    // Test if we can create instance
+    const aiService = new UnifiedAIService();
+    console.log('✅ UnifiedAIService instance created');
+    
+    // Test if we can wait for initialization
+    await aiService.initPromise;
+    console.log('✅ UnifiedAIService initialized');
+    
+    // Test if we can get prompts
+    const prompts = await aiService.getPrompts();
+    console.log(`✅ Got ${prompts.length} prompts`);
+    
+    // Test basic prompt data
+    const testPromptData = {
+      name: "Debug Test Prompt",
+      prompt: "This is a test prompt for debugging Firebase integration",
+      category: "test",
+      aiProvider: "deepseek",
+      temperature: 0.1,
+      maxTokens: 1000,
+      isActive: true,
+      suppliers: ['ALL']
+    };
+    
+    console.log('🔍 Testing prompt save with data:', testPromptData);
+    
+    // Try to save
+    const result = await aiService.savePrompt(testPromptData);
+    console.log('✅ Save result:', result);
+    
+    // Try to get the saved prompt
+    const allPromptsAfter = await aiService.getPrompts();
+    console.log(`✅ Prompts after save: ${allPromptsAfter.length}`);
+    
+    res.json({
+      success: true,
+      message: 'Debug test completed successfully',
+      data: {
+        promptsCountBefore: prompts.length,
+        promptsCountAfter: allPromptsAfter.length,
+        saveResult: result,
+        testPromptData,
+        firebaseStatus: 'working'
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Debug route error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : 'Error details hidden in production',
+      route: 'POST /api/ai/prompts/debug'
+    });
+  }
+});
 
-// 🔧 FIX: Add PUT route for updating existing prompts
-router.put('/prompts/:id', aiController.updatePrompt.bind(aiController));
+// 🔧 SIMPLE: Direct PromptManager test
+router.post('/prompts/simple-test', async (req, res) => {
+  try {
+    console.log('🧪 Simple test route called');
+    
+    // Direct call to PromptManager
+    const PromptManager = require('../services/ai/PromptManager');
+    const promptManager = new PromptManager();
+    
+    // Give it time to initialize Firebase
+    console.log('⏳ Waiting for PromptManager initialization...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    const testPrompt = {
+      name: "Simple Test Prompt",
+      prompt: "Direct test of PromptManager Firebase integration",
+      category: "test",
+      aiProvider: "deepseek"
+    };
+    
+    console.log('💾 Attempting direct save...');
+    const result = await promptManager.savePrompt(testPrompt);
+    console.log('✅ Direct save result:', result);
+    
+    res.json({
+      success: true,
+      message: 'Simple test completed',
+      result,
+      method: 'direct_prompt_manager'
+    });
+    
+  } catch (error) {
+    console.error('❌ Simple test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: 'POST /api/ai/prompts/simple-test'
+    });
+  }
+});
 
-// 🔧 FIX: Add DELETE route for deleting prompts  
-router.delete('/prompts/:id', aiController.deletePrompt.bind(aiController));
+// POST /api/ai/prompts - Create new prompt with enhanced error handling
+router.post('/prompts', async (req, res) => {
+  try {
+    console.log('📝 POST /api/ai/prompts called with body:', req.body);
+    
+    // Validate required fields
+    if (!req.body.name || !req.body.prompt) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name and prompt content are required',
+        route: 'POST /api/ai/prompts'
+      });
+    }
+    
+    // Check if controller exists and is properly initialized
+    if (!aiController) {
+      throw new Error('AI Controller not initialized');
+    }
+    
+    // Check if the method exists
+    if (typeof aiController.savePrompt !== 'function') {
+      throw new Error('savePrompt method not found on controller');
+    }
+    
+    console.log('✅ Calling controller.savePrompt...');
+    return await aiController.savePrompt(req, res);
+    
+  } catch (error) {
+    console.error('❌ POST /prompts error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      details: 'Error in POST /api/ai/prompts route',
+      route: 'POST /api/ai/prompts',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// PUT /api/ai/prompts/:id - Update existing prompt with enhanced error handling
+router.put('/prompts/:id', async (req, res) => {
+  try {
+    console.log(`📝 PUT /api/ai/prompts/${req.params.id} called`);
+    return await aiController.updatePrompt(req, res);
+  } catch (error) {
+    console.error('❌ PUT /prompts/:id error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: `PUT /api/ai/prompts/${req.params.id}`
+    });
+  }
+});
+
+// DELETE /api/ai/prompts/:id - Delete prompt with enhanced error handling
+router.delete('/prompts/:id', async (req, res) => {
+  try {
+    console.log(`🗑️ DELETE /api/ai/prompts/${req.params.id} called`);
+    return await aiController.deletePrompt(req, res);
+  } catch (error) {
+    console.error('❌ DELETE /prompts/:id error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: `DELETE /api/ai/prompts/${req.params.id}`
+    });
+  }
+});
 
 // POST /api/ai/prompts/test - Test a prompt with data
-router.post('/prompts/test', aiController.testPrompt.bind(aiController));
+router.post('/prompts/test', async (req, res) => {
+  try {
+    console.log('🧪 POST /api/ai/prompts/test called');
+    return await aiController.testPrompt(req, res);
+  } catch (error) {
+    console.error('❌ POST /prompts/test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: 'POST /api/ai/prompts/test'
+    });
+  }
+});
 
-// 🔧 FIX: Add GET route for individual prompt details
-router.get('/prompts/:id', aiController.getPrompt.bind(aiController));
+// GET /api/ai/prompts/:id - Get individual prompt details
+router.get('/prompts/:id', async (req, res) => {
+  try {
+    console.log(`📋 GET /api/ai/prompts/${req.params.id} called`);
+    return await aiController.getPrompt(req, res);
+  } catch (error) {
+    console.error('❌ GET /prompts/:id error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: `GET /api/ai/prompts/${req.params.id}`
+    });
+  }
+});
 
-// 🔧 FIX: Add POST route for testing specific prompt
-router.post('/prompts/:id/test', aiController.testSpecificPrompt.bind(aiController));
+// POST /api/ai/prompts/:id/test - Test specific prompt
+router.post('/prompts/:id/test', async (req, res) => {
+  try {
+    console.log(`🧪 POST /api/ai/prompts/${req.params.id}/test called`);
+    return await aiController.testSpecificPrompt(req, res);
+  } catch (error) {
+    console.error('❌ POST /prompts/:id/test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      route: `POST /api/ai/prompts/${req.params.id}/test`
+    });
+  }
+});
+
+// 🔧 ADD: Health check specifically for prompt system
+router.get('/prompts/health', async (req, res) => {
+  try {
+    console.log('🏥 AI Prompts health check...');
+    
+    // Test the entire prompt system
+    const UnifiedAIService = require('../services/ai/UnifiedAIService');
+    const aiService = new UnifiedAIService();
+    await aiService.initPromise;
+    
+    const prompts = await aiService.getPrompts();
+    const health = await aiService.healthCheck();
+    
+    res.json({
+      success: true,
+      message: 'AI Prompts system is healthy',
+      data: {
+        promptsCount: prompts.length,
+        systemHealth: health.status,
+        firebase: health.firebase || { status: 'unknown' }
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ AI Prompts health check failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      service: 'ai-prompts-service'
+    });
+  }
+});
 
 // === Document Processing Endpoints ===
 
@@ -140,10 +388,12 @@ router.use((error, req, res, next) => {
     });
   }
   
+  // Enhanced error response
   res.status(500).json({
     success: false,
     error: 'Internal AI service error',
-    message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong'
+    message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -152,8 +402,8 @@ router.use((error, req, res, next) => {
 router.get('/docs', (req, res) => {
   res.json({
     service: 'HiggsFlow Modular AI API',
-    version: '2.0.0',
-    description: 'Modular AI service with multi-provider support and supplier-specific intelligence',
+    version: '2.0.1-firebase-enhanced',
+    description: 'Modular AI service with multi-provider support, supplier-specific intelligence, and Firebase persistence',
     endpoints: {
       system: [
         'GET /api/ai/health - System health check',
@@ -166,12 +416,17 @@ router.get('/docs', (req, res) => {
       ],
       prompts: [
         'GET /api/ai/prompts - List all prompts',
-        'GET /api/ai/prompts/:id - Get individual prompt', // 🔧 NEW
+        'GET /api/ai/prompts/:id - Get individual prompt',
         'POST /api/ai/prompts - Create new prompt',
-        'PUT /api/ai/prompts/:id - Update existing prompt', // 🔧 NEW
-        'DELETE /api/ai/prompts/:id - Delete prompt', // 🔧 NEW
+        'PUT /api/ai/prompts/:id - Update existing prompt',
+        'DELETE /api/ai/prompts/:id - Delete prompt',
         'POST /api/ai/prompts/test - Test prompt with data',
-        'POST /api/ai/prompts/:id/test - Test specific prompt' // 🔧 NEW
+        'POST /api/ai/prompts/:id/test - Test specific prompt',
+        'GET /api/ai/prompts/health - Prompt system health check'
+      ],
+      debug: [
+        'POST /api/ai/prompts/debug - Debug Firebase integration',
+        'POST /api/ai/prompts/simple-test - Direct PromptManager test'
       ],
       extraction: [
         'POST /api/ai/extract/document - Generic extraction',
@@ -190,8 +445,11 @@ router.get('/docs', (req, res) => {
       'Performance tracking and analytics',
       'Automatic fallback between AI providers',
       'Enhanced document extraction accuracy',
-      'Full CRUD operations for prompt management', // 🔧 NEW
-      'Individual prompt testing and validation' // 🔧 NEW
+      'Full CRUD operations for prompt management',
+      'Individual prompt testing and validation',
+      'Firebase Firestore persistence',
+      'Zero data loss on deployments',
+      'Enhanced debugging capabilities'
     ],
     file_support: [
       'PDF documents',
@@ -199,7 +457,12 @@ router.get('/docs', (req, res) => {
       'Excel files (XLSX, XLS)',
       'Plain text files'
     ],
-    prompt_management: { // 🔧 NEW SECTION
+    firebase: {
+      storage: 'firestore',
+      persistence: 'permanent',
+      project: 'higgsflow-b9f81'
+    },
+    prompt_management: {
       crud_operations: {
         create: 'POST /api/ai/prompts',
         read: 'GET /api/ai/prompts or GET /api/ai/prompts/:id',
@@ -209,6 +472,11 @@ router.get('/docs', (req, res) => {
       testing: {
         batch_test: 'POST /api/ai/prompts/test',
         individual_test: 'POST /api/ai/prompts/:id/test'
+      },
+      debugging: {
+        debug_test: 'POST /api/ai/prompts/debug',
+        simple_test: 'POST /api/ai/prompts/simple-test',
+        health_check: 'GET /api/ai/prompts/health'
       }
     }
   });
