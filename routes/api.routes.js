@@ -11,13 +11,43 @@ const recommendationController = require('../controllers/recommendation.controll
 const WebSearchService = require('../services/webSearchService');
 
 // ✅ ENHANCED: Import your existing services for MCP integration
-// Adjust these paths based on your actual file structure
+// Try multiple paths to find AIService
 let MCPPromptService, AIService;
 try {
   MCPPromptService = require('../services/MCPPromptService');
-  AIService = require('../services/ai/AIService');
+  console.log('✅ MCPPromptService loaded successfully');
 } catch (error) {
-  console.warn('⚠️ MCP services not found, using fallback enhancement');
+  console.warn('⚠️ MCPPromptService not found:', error.message);
+}
+
+try {
+  AIService = require('../services/ai/AIService');
+  console.log('✅ AIService loaded successfully from ../services/ai/AIService');
+} catch (error) {
+  console.warn('⚠️ AIService not found at ../services/ai/AIService, trying alternatives...');
+  
+  // Try alternative paths
+  try {
+    AIService = require('../services/AIService');
+    console.log('✅ AIService loaded from ../services/AIService');
+  } catch (error2) {
+    try {
+      AIService = require('../controllers/ai.controller');
+      console.log('✅ AIService loaded from ../controllers/ai.controller');
+    } catch (error3) {
+      try {
+        // Check if it's available globally
+        if (global.AIService) {
+          AIService = global.AIService;
+          console.log('✅ AIService loaded from global');
+        } else {
+          console.warn('⚠️ AIService not found in any location, will use fallback');
+        }
+      } catch (error4) {
+        console.warn('⚠️ AIService not available, using pattern fallback only');
+      }
+    }
+  }
 }
 
 // ✅ SIMPLE FIX: Import and use existing AI route handlers
@@ -280,6 +310,7 @@ router.post('/enhance-product', async (req, res) => {
             
             // ✅ Use your existing AI service
             if (AIService) {
+              console.log('✅ AIService available, proceeding with AI enhancement...');
               const aiService = new AIService();
               const startTime = Date.now();
               
@@ -355,6 +386,8 @@ router.post('/enhance-product', async (req, res) => {
               });
               
               return res.json(response);
+            } else {
+              console.warn('⚠️ AIService not available, falling back to pattern enhancement');
             }
           }
         }
