@@ -9,6 +9,8 @@ const multer = require('multer');
 const extractionController = require('../controllers/extraction.controller');
 const duplicateController = require('../controllers/duplicate.controller');
 const recommendationController = require('../controllers/recommendation.controller');
+const WebSearchService = require('../services/webSearchService');
+
 
 /// Enhanced health check
 router.get('/health', (req, res) => {
@@ -69,5 +71,42 @@ router.post('/save-correction', recommendationController.saveCorrection);
 router.post('/detect-category', recommendationController.detectCategory);
 
 router.post('/bank-payments/extract', upload.single('file'), extractionController.extractBankPaymentSlip);
+
+// Add the web search endpoint
+router.post('/web-search', async (req, res) => {
+  try {
+    const { queries, type, partNumber, brand, description } = req.body;
+    
+    console.log('🔍 Web search request:', { partNumber, brand, type });
+    
+    const webSearchService = new WebSearchService();
+    
+    // Use the provided part number or extract from queries
+    const searchPartNumber = partNumber || (queries && queries[0] && queries[0].replace(/['"]/g, ''));
+    
+    if (!searchPartNumber) {
+      return res.status(400).json({
+        found: false,
+        error: 'Part number is required for web search'
+      });
+    }
+    
+    const searchResult = await webSearchService.searchProductInfo(
+      searchPartNumber,
+      brand,
+      description
+    );
+    
+    res.json(searchResult);
+    
+  } catch (error) {
+    console.error('Web search endpoint error:', error);
+    res.status(500).json({
+      found: false,
+      error: error.message,
+      source: 'web_search_endpoint'
+    });
+  }
+});
 
 module.exports = router;
