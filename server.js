@@ -67,6 +67,143 @@ app.use((req, res, next) => {
   next();
 });
 
+// 🔧 CRITICAL DEBUG ENDPOINT - Add this BEFORE your other routes
+app.post('/api/find-problem', (req, res) => {
+  console.log('🔍 Debug endpoint called - starting stack trace monitoring...');
+  
+  // Override console.log to catch the 0ms message and show stack trace
+  const originalConsoleLog = console.log;
+  console.log = function(...args) {
+    const message = args.join(' ');
+    
+    // Check for the exact 0ms message
+    if (message.includes('✅ AI response received in 0ms')) {
+      console.error('🚨🚨🚨 FOUND THE EXACT SOURCE OF 0ms! 🚨🚨🚨');
+      console.error('🚨 Message:', message);
+      console.error('🚨 STACK TRACE (showing exact file and line):');
+      console.error(new Error('SOURCE LOCATION TRACE').stack);
+      console.error('🚨🚨🚨 END SOURCE TRACE 🚨🚨🚨');
+      
+      // Also check for any other suspicious timing messages
+      console.error('🔍 Additional debugging info:');
+      console.error('🔍 Process uptime:', process.uptime(), 'seconds');
+      console.error('🔍 Memory usage:', process.memoryUsage());
+    }
+    
+    // Check for other suspicious instant responses
+    if (message.includes('response received in 1ms') || 
+        message.includes('response received in 0ms') ||
+        message.includes('AI response received in') && (message.includes('0ms') || message.includes('1ms'))) {
+      console.error('🚨 SUSPICIOUS INSTANT RESPONSE DETECTED!');
+      console.error('🚨 Message:', message);
+      console.error('🚨 Stack trace:');
+      console.error(new Error('INSTANT RESPONSE LOCATION').stack);
+    }
+    
+    // Call original console.log
+    originalConsoleLog.apply(console, args);
+  };
+  
+  console.log('✅ Stack trace monitoring ENABLED');
+  console.log('🎯 Now test your product enhancement endpoint');
+  console.log('📋 Any 0ms or 1ms responses will show full stack traces');
+  
+  res.json({ 
+    success: true,
+    message: 'Debug stack trace monitoring enabled!',
+    instructions: [
+      '1. This endpoint is now monitoring all console.log calls',
+      '2. Call /api/enhance-product with your test data',
+      '3. Check Railway logs immediately for stack traces',
+      '4. The stack trace will show the exact file and line causing 0ms responses'
+    ],
+    timestamp: new Date().toISOString(),
+    debugMode: 'ACTIVE'
+  });
+});
+
+// 🔧 NUCLEAR TEST ENDPOINT - Direct API test to verify connectivity
+app.post('/api/nuclear-test', async (req, res) => {
+  const startTime = Date.now();
+  console.log('🧪 NUCLEAR TEST: Starting direct DeepSeek API call...');
+  
+  try {
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    
+    if (!apiKey) {
+      return res.json({
+        success: false,
+        error: 'DEEPSEEK_API_KEY not configured',
+        time: Date.now() - startTime + 'ms',
+        environment: {
+          NODE_ENV: process.env.NODE_ENV,
+          hasApiKey: false
+        }
+      });
+    }
+    
+    console.log('🧪 NUCLEAR: Making direct fetch to DeepSeek API...');
+    
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [{ 
+          role: 'user', 
+          content: 'Nuclear test - return exactly: {"test": "success", "timestamp": "' + new Date().toISOString() + '", "nuclear": true}' 
+        }],
+        max_tokens: 100,
+        temperature: 0.1
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`DeepSeek API error ${response.status}: ${errorText}`);
+    }
+    
+    const data = await response.json();
+    const actualTime = Date.now() - startTime;
+    
+    console.log(`🧪 NUCLEAR TEST: REAL API completed in ${actualTime}ms`);
+    console.log('🧪 NUCLEAR: Response received:', data.choices[0]?.message?.content);
+    
+    res.json({
+      success: true,
+      message: 'REAL API call successful!',
+      actualTime: actualTime + 'ms',
+      response: data.choices[0]?.message?.content,
+      metadata: {
+        model: data.model,
+        usage: data.usage,
+        responseId: data.id
+      },
+      environment: {
+        NODE_ENV: process.env.NODE_ENV,
+        hasApiKey: true,
+        apiKeyLength: apiKey.length
+      }
+    });
+  } catch (error) {
+    const actualTime = Date.now() - startTime;
+    console.error(`🧪 NUCLEAR TEST: Failed after ${actualTime}ms:`, error.message);
+    
+    res.json({
+      success: false,
+      error: error.message,
+      actualTime: actualTime + 'ms',
+      environment: {
+        NODE_ENV: process.env.NODE_ENV,
+        hasApiKey: !!process.env.DEEPSEEK_API_KEY
+      }
+    });
+  }
+});
+
 // ✅ NEW: Category Management Routes
 // Initialize default categories
 const initializeDefaultCategories = async () => {
@@ -508,19 +645,29 @@ app.get('/health', async (req, res) => {
           storage: 'available'
         }
       },
+      // 🔧 NEW: Debug endpoints for troubleshooting
+      debug: {
+        endpoints: {
+          findProblem: '/api/find-problem',
+          nuclearTest: '/api/nuclear-test'
+        },
+        description: 'Use /api/find-problem to trace 0ms responses, /api/nuclear-test to verify API connectivity'
+      },
       timeouts: {
         request: '5 minutes',
         response: '5 minutes',
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase-categories', // ✅ NEW: Updated version
+      version: '2.0.0-mcp-enhanced-firebase-categories-debug', // ✅ NEW: Updated version with debug
       endpoints: {
         health: '/health',
         api: '/api',
         ai: '/api/ai',
         mcp: '/api/mcp',
         categories: '/api/categories', // ✅ NEW: Category endpoints
+        debug: '/api/find-problem',     // 🔧 NEW: Debug endpoint
+        nuclearTest: '/api/nuclear-test', // 🔧 NEW: Direct API test
         aiDocs: '/api/ai/docs',
         mcpDocs: '/api/mcp/docs',
         extraction: '/api/purchase-orders/extract',
@@ -545,7 +692,8 @@ app.get('/health', async (req, res) => {
         persistentPrompts: promptSystemHealth.storage === 'firestore',
         persistentCategories: categorySystemHealth.storage === 'firestore', // ✅ NEW: Category persistence
         firebaseIntegration: !!firebaseApp,
-        dynamicCategoryManagement: !!firebaseApp // ✅ NEW: Dynamic categories feature
+        dynamicCategoryManagement: !!firebaseApp, // ✅ NEW: Dynamic categories feature
+        debugEndpoints: true // 🔧 NEW: Debug feature flag
       }
     });
   } catch (error) {
@@ -568,7 +716,7 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase-categories',
+      version: '2.0.0-mcp-enhanced-firebase-categories-debug',
       ai_status: 'initializing',
       error: error.message
     });
@@ -578,8 +726,8 @@ app.get('/health', async (req, res) => {
 // Enhanced root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP, Firebase & Category Management',
-    version: '2.0.0-mcp-enhanced-firebase-categories', // ✅ NEW: Updated version
+    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP, Firebase & Category Management + Debug Tools',
+    version: '2.0.0-mcp-enhanced-firebase-categories-debug', // ✅ NEW: Updated version
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
@@ -593,7 +741,8 @@ app.get('/', (req, res) => {
       'Streaming processes',
       'Persistent prompt storage (Firebase)',
       'Dynamic category management', // ✅ NEW: Category feature
-      'Zero data loss on deployments'
+      'Zero data loss on deployments',
+      'Debug tools for troubleshooting' // 🔧 NEW: Debug feature
     ],
     endpoints: {
       health: '/health',
@@ -601,6 +750,8 @@ app.get('/', (req, res) => {
       ai: '/api/ai',
       mcp: '/api/mcp',
       categories: '/api/categories', // ✅ NEW: Category endpoint
+      debug: '/api/find-problem',     // 🔧 NEW: Debug endpoint
+      nuclearTest: '/api/nuclear-test', // 🔧 NEW: Direct API test
       extraction: '/api/purchase-orders/extract',
       bankPaymentExtraction: '/api/bank-payments/extract',
       enhancedPOExtraction: '/api/ai/extract/purchase-order',
@@ -637,6 +788,19 @@ app.get('/', (req, res) => {
         'Persistent storage',
         'Real-time updates'
       ]
+    },
+    // 🔧 NEW: Debug tools information
+    debugTools: {
+      findProblem: {
+        endpoint: '/api/find-problem',
+        description: 'Enables stack trace monitoring to find sources of 0ms responses',
+        usage: 'POST /api/find-problem, then test your endpoints'
+      },
+      nuclearTest: {
+        endpoint: '/api/nuclear-test',
+        description: 'Direct DeepSeek API test to verify connectivity',
+        usage: 'POST /api/nuclear-test'
+      }
     }
   });
 });
@@ -713,11 +877,17 @@ app.use((req, res) => {
 
 // Start server with enhanced logging
 const server = app.listen(PORT, async () => {
-  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase + Categories) is running on port ${PORT}`);
+  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase + Categories + Debug) is running on port ${PORT}`);
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`);
+  
+  // 🔧 NEW: Debug endpoints logging
+  console.log('\n🔧 DEBUG ENDPOINTS (NEW):');
+  console.log(`   🔍 POST http://localhost:${PORT}/api/find-problem - Enable 0ms source tracing`);
+  console.log(`   🧪 POST http://localhost:${PORT}/api/nuclear-test - Direct DeepSeek API test`);
+  console.log(`   📋 These will help identify the exact source of instant responses`);
   
   // Initialize categories after server starts
   if (firebaseApp && db) {
@@ -843,10 +1013,13 @@ const server = app.listen(PORT, async () => {
   console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Persistent prompt storage (Firebase)`);
   console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Dynamic category management (Firebase)`); // ✅ NEW: Category feature status
   console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Zero data loss on deployments`);
+  console.log('   ✅ Debug tools for troubleshooting 0ms responses'); // 🔧 NEW: Debug feature
   
-  console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase + Categories) ready for testing!');
+  console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase + Categories + Debug) ready for testing!');
   console.log(`   Test: curl http://localhost:${PORT}/api/mcp/status`);
   console.log(`   Categories: curl http://localhost:${PORT}/api/categories`); // ✅ NEW: Category test
+  console.log(`   Debug: curl -X POST http://localhost:${PORT}/api/find-problem`); // 🔧 NEW: Debug test
+  console.log(`   Nuclear: curl -X POST http://localhost:${PORT}/api/nuclear-test`); // 🔧 NEW: API test
   console.log(`   Docs: http://localhost:${PORT}/api/mcp/docs`);
   console.log(`   WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
   console.log(`   Firebase: ${firebaseApp ? 'Connected' : 'Not configured'}`);
