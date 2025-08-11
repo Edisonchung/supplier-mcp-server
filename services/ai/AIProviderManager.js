@@ -1,8 +1,9 @@
-//services/ai/AIProviderManager.js - Enhanced for Product Enhancement
+//services/ai/AIProviderManager.js - Enhanced with Better Debugging
 class AIProviderManager {
   constructor() {
     this.providers = new Map();
     this.defaultProvider = 'deepseek';
+    this.debugMode = process.env.AI_DEBUG === 'true' || process.env.NODE_ENV === 'development';
     this.stats = {
       totalCalls: 0,
       successfulCalls: 0,
@@ -15,44 +16,74 @@ class AIProviderManager {
 
   initializeProviders() {
     console.log('🔧 Initializing AI providers for HiggsFlow product enhancement...');
+    
+    // 🔍 DEBUG: Log environment configuration
+    if (this.debugMode) {
+      console.log('🔍 DEBUG: Environment Configuration', {
+        DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY ? 'CONFIGURED' : 'MISSING',
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'CONFIGURED' : 'MISSING',
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? 'CONFIGURED' : 'MISSING',
+        GOOGLE_AI_API_KEY: process.env.GOOGLE_AI_API_KEY ? 'CONFIGURED' : 'MISSING',
+        debugMode: this.debugMode,
+        nodeEnv: process.env.NODE_ENV
+      });
+    }
 
     // DeepSeek (your primary provider)
     if (process.env.DEEPSEEK_API_KEY) {
-      const { OpenAI } = require('openai');
-      this.providers.set('deepseek', new OpenAI({
-        apiKey: process.env.DEEPSEEK_API_KEY,
-        baseURL: 'https://api.deepseek.com'
-      }));
-      console.log('✅ DeepSeek initialized (primary for product enhancement)');
-      this.stats.callsByProvider.deepseek = { calls: 0, successes: 0, failures: 0 };
+      try {
+        const { OpenAI } = require('openai');
+        this.providers.set('deepseek', new OpenAI({
+          apiKey: process.env.DEEPSEEK_API_KEY,
+          baseURL: 'https://api.deepseek.com'
+        }));
+        console.log('✅ DeepSeek initialized (primary for product enhancement)');
+        this.stats.callsByProvider.deepseek = { calls: 0, successes: 0, failures: 0 };
+      } catch (error) {
+        console.error('❌ Failed to initialize DeepSeek:', error.message);
+      }
+    } else {
+      console.warn('⚠️ DEEPSEEK_API_KEY not found - DeepSeek provider unavailable');
     }
 
     // OpenAI (backup/premium features)
     if (process.env.OPENAI_API_KEY) {
-      const { OpenAI } = require('openai');
-      this.providers.set('openai', new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY
-      }));
-      console.log('✅ OpenAI initialized (backup for high-precision tasks)');
-      this.stats.callsByProvider.openai = { calls: 0, successes: 0, failures: 0 };
+      try {
+        const { OpenAI } = require('openai');
+        this.providers.set('openai', new OpenAI({
+          apiKey: process.env.OPENAI_API_KEY
+        }));
+        console.log('✅ OpenAI initialized (backup for high-precision tasks)');
+        this.stats.callsByProvider.openai = { calls: 0, successes: 0, failures: 0 };
+      } catch (error) {
+        console.error('❌ Failed to initialize OpenAI:', error.message);
+      }
     }
 
     // Anthropic Claude (advanced analysis)
     if (process.env.ANTHROPIC_API_KEY) {
-      const Anthropic = require('@anthropic-ai/sdk');
-      this.providers.set('anthropic', new Anthropic({
-        apiKey: process.env.ANTHROPIC_API_KEY
-      }));
-      console.log('✅ Anthropic initialized (advanced product analysis)');
-      this.stats.callsByProvider.anthropic = { calls: 0, successes: 0, failures: 0 };
+      try {
+        const Anthropic = require('@anthropic-ai/sdk');
+        this.providers.set('anthropic', new Anthropic({
+          apiKey: process.env.ANTHROPIC_API_KEY
+        }));
+        console.log('✅ Anthropic initialized (advanced product analysis)');
+        this.stats.callsByProvider.anthropic = { calls: 0, successes: 0, failures: 0 };
+      } catch (error) {
+        console.error('❌ Failed to initialize Anthropic:', error.message);
+      }
     }
 
     // Google AI (specialized tasks)
     if (process.env.GOOGLE_AI_API_KEY) {
-      const { GoogleGenerativeAI } = require('@google/generative-ai');
-      this.providers.set('google', new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY));
-      console.log('✅ Google AI initialized (specialized analysis)');
-      this.stats.callsByProvider.google = { calls: 0, successes: 0, failures: 0 };
+      try {
+        const { GoogleGenerativeAI } = require('@google/generative-ai');
+        this.providers.set('google', new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY));
+        console.log('✅ Google AI initialized (specialized analysis)');
+        this.stats.callsByProvider.google = { calls: 0, successes: 0, failures: 0 };
+      } catch (error) {
+        console.error('❌ Failed to initialize Google AI:', error.message);
+      }
     }
 
     const providerCount = this.providers.size;
@@ -62,11 +93,28 @@ class AIProviderManager {
       console.warn('⚠️ No AI providers configured. Please add API keys to environment variables.');
       console.warn('💡 Add DEEPSEEK_API_KEY to enable AI-powered product enhancement.');
     }
+
+    // 🔍 DEBUG: List all available providers
+    if (this.debugMode) {
+      console.log('🔍 DEBUG: Available Providers', Array.from(this.providers.keys()));
+    }
   }
 
   async callAI(provider, prompt, options = {}) {
     const requestId = Date.now().toString();
-    console.log(`🚀 [${requestId}] Starting AI call to ${provider} for product enhancement`);
+    console.log(`🚀 [${requestId}] Starting REAL AI call to ${provider} for product enhancement`);
+    
+    // 🔍 DEBUG: Log call details
+    if (this.debugMode) {
+      console.log(`🔍 DEBUG: [${requestId}] Call Details`, {
+        provider,
+        promptLength: prompt.length,
+        promptPreview: prompt.substring(0, 200) + '...',
+        options,
+        availableProviders: Array.from(this.providers.keys()),
+        timestamp: new Date().toISOString()
+      });
+    }
     
     const ai = this.providers.get(provider);
     if (!ai) {
@@ -89,10 +137,16 @@ class AIProviderManager {
     }
 
     try {
-      console.log(`🤖 [${requestId}] Calling ${provider} AI for product enhancement...`);
+      console.log(`🤖 [${requestId}] Making REAL API call to ${provider}...`);
       console.log(`📊 [${requestId}] Parameters: temp=${temperature}, maxTokens=${maxTokens}, timeout=${timeout/1000}s`);
       
       const startTime = Date.now();
+      
+      // 🔍 DEBUG: Log before API call
+      if (this.debugMode) {
+        console.log(`🔍 DEBUG: [${requestId}] About to call executeAICall for ${provider}`);
+      }
+      
       const result = await Promise.race([
         this.executeAICall(provider, ai, prompt, { temperature, maxTokens, requestId }),
         new Promise((_, reject) => 
@@ -109,12 +163,37 @@ class AIProviderManager {
       }
       this.updateAverageResponseTime(responseTime);
       
-      console.log(`✅ [${requestId}] ${provider} responded successfully in ${responseTime}ms`);
+      console.log(`✅ [${requestId}] ${provider} REAL API call completed successfully in ${responseTime}ms`);
       console.log(`📈 [${requestId}] Success rate: ${Math.round((this.stats.successfulCalls / this.stats.totalCalls) * 100)}%`);
+      
+      // 🔍 DEBUG: Log response details
+      if (this.debugMode) {
+        console.log(`🔍 DEBUG: [${requestId}] Response Details`, {
+          provider,
+          responseTime,
+          responseType: typeof result,
+          responseLength: JSON.stringify(result).length,
+          hasContent: !!result,
+          timestamp: new Date().toISOString()
+        });
+      }
       
       return result;
     } catch (error) {
-      console.error(`❌ [${requestId}] AI provider '${provider}' error:`, error.message);
+      const errorTime = Date.now() - Date.now();
+      console.error(`❌ [${requestId}] REAL AI provider '${provider}' error after ${errorTime}ms:`, error.message);
+      
+      // 🔍 DEBUG: Log error details
+      if (this.debugMode) {
+        console.error(`🔍 DEBUG: [${requestId}] Error Details`, {
+          provider,
+          errorMessage: error.message,
+          errorStack: error.stack?.substring(0, 500),
+          promptLength: prompt.length,
+          options,
+          timestamp: new Date().toISOString()
+        });
+      }
       
       // Update failure stats
       this.stats.failedCalls++;
@@ -134,98 +213,142 @@ class AIProviderManager {
 
   async executeAICall(provider, ai, prompt, options) {
     const { temperature, maxTokens, requestId } = options;
+    
+    // 🔍 DEBUG: Log execution start
+    if (this.debugMode) {
+      console.log(`🔍 DEBUG: [${requestId}] executeAICall started for ${provider}`);
+    }
 
     switch (provider) {
       case 'deepseek':
       case 'openai':
         console.log(`🔧 [${requestId}] Using ${provider === 'openai' ? 'GPT-4-Turbo' : 'DeepSeek-Chat'} model`);
-        const completion = await ai.chat.completions.create({
-          model: provider === 'openai' ? 'gpt-4-turbo' : 'deepseek-chat',
-          messages: [
-            { 
-              role: 'system', 
-              content: 'You are HiggsFlow\'s industrial product enhancement AI specialist. You excel at analyzing part numbers and providing detailed product information. Always return valid JSON with comprehensive product analysis.' 
-            },
-            { role: 'user', content: prompt }
-          ],
-          temperature,
-          max_tokens: maxTokens,
-          response_format: { type: "json_object" }
-        });
-        
-        const content = completion.choices[0].message.content;
-        console.log(`📝 [${requestId}] Received ${content.length} characters from ${provider}`);
         
         try {
-          const parsed = JSON.parse(content);
-          console.log(`✅ [${requestId}] Successfully parsed JSON response from ${provider}`);
-          return parsed;
-        } catch (parseError) {
-          console.error(`❌ [${requestId}] JSON parse error from ${provider}:`, parseError.message);
-          console.log(`🔍 [${requestId}] Raw response: ${content.substring(0, 200)}...`);
-          throw new Error(`Failed to parse JSON response from ${provider}: ${parseError.message}`);
+          const completion = await ai.chat.completions.create({
+            model: provider === 'openai' ? 'gpt-4-turbo' : 'deepseek-chat',
+            messages: [
+              { 
+                role: 'system', 
+                content: 'You are HiggsFlow\'s industrial product enhancement AI specialist. You excel at analyzing part numbers and providing detailed product information. Always return valid JSON with comprehensive product analysis.' 
+              },
+              { role: 'user', content: prompt }
+            ],
+            temperature,
+            max_tokens: maxTokens,
+            response_format: { type: "json_object" }
+          });
+          
+          const content = completion.choices[0].message.content;
+          console.log(`📝 [${requestId}] Received ${content.length} characters from ${provider}`);
+          
+          // 🔍 DEBUG: Log raw response
+          if (this.debugMode) {
+            console.log(`🔍 DEBUG: [${requestId}] Raw ${provider} response preview:`, content.substring(0, 300) + '...');
+          }
+          
+          try {
+            const parsed = JSON.parse(content);
+            console.log(`✅ [${requestId}] Successfully parsed JSON response from ${provider}`);
+            
+            // 🔍 DEBUG: Log parsed structure
+            if (this.debugMode) {
+              console.log(`🔍 DEBUG: [${requestId}] Parsed object keys:`, Object.keys(parsed));
+            }
+            
+            return parsed;
+          } catch (parseError) {
+            console.error(`❌ [${requestId}] JSON parse error from ${provider}:`, parseError.message);
+            console.log(`🔍 [${requestId}] Raw response causing parse error:`, content.substring(0, 500) + '...');
+            throw new Error(`Failed to parse JSON response from ${provider}: ${parseError.message}`);
+          }
+        } catch (apiError) {
+          console.error(`❌ [${requestId}] ${provider} API error:`, apiError.message);
+          throw apiError;
         }
 
       case 'anthropic':
         console.log(`🔧 [${requestId}] Using Claude-3-Sonnet model`);
-        const message = await ai.messages.create({
-          model: 'claude-3-sonnet-20240229',
-          max_tokens: maxTokens,
-          messages: [{ 
-            role: 'user', 
-            content: `You are HiggsFlow's industrial product enhancement AI. Analyze the following product information and return valid JSON with detailed enhancement data.
-
-${prompt}` 
-          }],
-          temperature
-        });
-        
-        const anthropicContent = message.content[0].text;
-        console.log(`📝 [${requestId}] Received ${anthropicContent.length} characters from Anthropic`);
         
         try {
-          // Claude sometimes returns JSON wrapped in markdown
-          const cleanContent = anthropicContent
-            .replace(/```json\s*\n?/g, '')
-            .replace(/```\s*\n?/g, '')
-            .trim();
+          const message = await ai.messages.create({
+            model: 'claude-3-sonnet-20240229',
+            max_tokens: maxTokens,
+            messages: [{ 
+              role: 'user', 
+              content: `You are HiggsFlow's industrial product enhancement AI. Analyze the following product information and return valid JSON with detailed enhancement data.
+
+${prompt}` 
+            }],
+            temperature
+          });
           
-          const parsed = JSON.parse(cleanContent);
-          console.log(`✅ [${requestId}] Successfully parsed JSON response from Anthropic`);
-          return parsed;
-        } catch (parseError) {
-          console.error(`❌ [${requestId}] JSON parse error from Anthropic:`, parseError.message);
-          console.log(`🔍 [${requestId}] Raw response: ${anthropicContent.substring(0, 200)}...`);
-          throw new Error(`Failed to parse JSON response from Anthropic: ${parseError.message}`);
+          const anthropicContent = message.content[0].text;
+          console.log(`📝 [${requestId}] Received ${anthropicContent.length} characters from Anthropic`);
+          
+          // 🔍 DEBUG: Log raw response
+          if (this.debugMode) {
+            console.log(`🔍 DEBUG: [${requestId}] Raw Anthropic response preview:`, anthropicContent.substring(0, 300) + '...');
+          }
+          
+          try {
+            // Claude sometimes returns JSON wrapped in markdown
+            const cleanContent = anthropicContent
+              .replace(/```json\s*\n?/g, '')
+              .replace(/```\s*\n?/g, '')
+              .trim();
+            
+            const parsed = JSON.parse(cleanContent);
+            console.log(`✅ [${requestId}] Successfully parsed JSON response from Anthropic`);
+            return parsed;
+          } catch (parseError) {
+            console.error(`❌ [${requestId}] JSON parse error from Anthropic:`, parseError.message);
+            console.log(`🔍 [${requestId}] Raw Anthropic response:`, anthropicContent.substring(0, 500) + '...');
+            throw new Error(`Failed to parse JSON response from Anthropic: ${parseError.message}`);
+          }
+        } catch (apiError) {
+          console.error(`❌ [${requestId}] Anthropic API error:`, apiError.message);
+          throw apiError;
         }
 
       case 'google':
         console.log(`🔧 [${requestId}] Using Gemini-Pro model`);
-        const model = ai.getGenerativeModel({ model: 'gemini-pro' });
-        const result = await model.generateContent(`HiggsFlow industrial product enhancement task:
+        
+        try {
+          const model = ai.getGenerativeModel({ model: 'gemini-pro' });
+          const result = await model.generateContent(`HiggsFlow industrial product enhancement task:
 
 ${prompt}
 
 Return valid JSON only.`);
-        const response = await result.response;
-        const googleContent = response.text();
-        
-        console.log(`📝 [${requestId}] Received ${googleContent.length} characters from Google`);
-        
-        try {
-          // Google sometimes returns JSON wrapped in markdown
-          const cleanContent = googleContent
-            .replace(/```json\s*\n?/g, '')
-            .replace(/```\s*\n?/g, '')
-            .trim();
+          const response = await result.response;
+          const googleContent = response.text();
           
-          const parsed = JSON.parse(cleanContent);
-          console.log(`✅ [${requestId}] Successfully parsed JSON response from Google`);
-          return parsed;
-        } catch (parseError) {
-          console.error(`❌ [${requestId}] JSON parse error from Google:`, parseError.message);
-          console.log(`🔍 [${requestId}] Raw response: ${googleContent.substring(0, 200)}...`);
-          throw new Error(`Failed to parse JSON response from Google: ${parseError.message}`);
+          console.log(`📝 [${requestId}] Received ${googleContent.length} characters from Google`);
+          
+          // 🔍 DEBUG: Log raw response
+          if (this.debugMode) {
+            console.log(`🔍 DEBUG: [${requestId}] Raw Google response preview:`, googleContent.substring(0, 300) + '...');
+          }
+          
+          try {
+            // Google sometimes returns JSON wrapped in markdown
+            const cleanContent = googleContent
+              .replace(/```json\s*\n?/g, '')
+              .replace(/```\s*\n?/g, '')
+              .trim();
+            
+            const parsed = JSON.parse(cleanContent);
+            console.log(`✅ [${requestId}] Successfully parsed JSON response from Google`);
+            return parsed;
+          } catch (parseError) {
+            console.error(`❌ [${requestId}] JSON parse error from Google:`, parseError.message);
+            console.log(`🔍 [${requestId}] Raw Google response:`, googleContent.substring(0, 500) + '...');
+            throw new Error(`Failed to parse JSON response from Google: ${parseError.message}`);
+          }
+        } catch (apiError) {
+          console.error(`❌ [${requestId}] Google API error:`, apiError.message);
+          throw apiError;
         }
 
       default:
@@ -263,6 +386,7 @@ Return valid JSON only.`);
         available: isAvailable,
         configured: !!process.env[envKey],
         primary: provider === this.defaultProvider,
+        realAPIMode: true, // Always true for this enhanced version
         stats: {
           totalCalls: providerStats.calls,
           successfulCalls: providerStats.successes,
@@ -277,6 +401,8 @@ Return valid JSON only.`);
       providers: status,
       totalAvailable: availableProviders.length,
       defaultProvider: this.defaultProvider,
+      realAPIMode: true,
+      debugMode: this.debugMode,
       globalStats: {
         totalCalls: this.stats.totalCalls,
         successfulCalls: this.stats.successfulCalls,
@@ -290,17 +416,17 @@ Return valid JSON only.`);
 
   // Enhanced health check for all providers
   async healthCheck() {
-    console.log('🏥 Running AI provider health check...');
+    console.log('🏥 Running REAL AI provider health check...');
     const results = {};
     
     for (const [name, provider] of this.providers) {
       try {
-        console.log(`🔍 Testing ${name} provider...`);
+        console.log(`🔍 Testing ${name} provider with REAL API call...`);
         const startTime = Date.now();
         
         // Simple test call for product enhancement
-        await this.executeAICall(name, provider, 
-          'Test health check. Return: {"status": "healthy", "provider": "' + name + '"}', 
+        const testResult = await this.executeAICall(name, provider, 
+          'Test health check for product enhancement. Return JSON: {"status": "healthy", "provider": "' + name + '", "test": "product_enhancement"}', 
           { maxTokens: 100, temperature: 0.1, requestId: 'health-check' }
         );
         
@@ -309,23 +435,26 @@ Return valid JSON only.`);
           status: 'healthy', 
           available: true, 
           responseTime: `${responseTime}ms`,
+          testResult: testResult,
+          realAPICall: true,
           lastChecked: new Date().toISOString()
         };
-        console.log(`✅ ${name} health check passed (${responseTime}ms)`);
+        console.log(`✅ ${name} REAL health check passed (${responseTime}ms)`);
         
       } catch (error) {
         results[name] = { 
           status: 'unhealthy', 
           available: false, 
           error: error.message,
+          realAPICall: true,
           lastChecked: new Date().toISOString()
         };
-        console.error(`❌ ${name} health check failed:`, error.message);
+        console.error(`❌ ${name} REAL health check failed:`, error.message);
       }
     }
     
     const healthyCount = Object.values(results).filter(r => r.status === 'healthy').length;
-    console.log(`🎯 Health check complete: ${healthyCount}/${this.providers.size} providers healthy`);
+    console.log(`🎯 REAL health check complete: ${healthyCount}/${this.providers.size} providers healthy`);
     
     return {
       providers: results,
@@ -333,13 +462,14 @@ Return valid JSON only.`);
         total: this.providers.size,
         healthy: healthyCount,
         unhealthy: this.providers.size - healthyCount,
-        overallHealth: healthyCount > 0 ? 'operational' : 'degraded'
+        overallHealth: healthyCount > 0 ? 'operational' : 'degraded',
+        realAPIMode: true
       },
       timestamp: new Date().toISOString()
     };
   }
 
-  // ✅ NEW: Method to get detailed statistics
+  // Method to get detailed statistics
   getDetailedStats() {
     return {
       ...this.stats,
@@ -347,11 +477,13 @@ Return valid JSON only.`);
       averageResponseTime: Math.round(this.stats.averageResponseTime),
       successRate: this.stats.totalCalls > 0 ? 
         Math.round((this.stats.successfulCalls / this.stats.totalCalls) * 100) : 0,
+      realAPIMode: true,
+      debugMode: this.debugMode,
       timestamp: new Date().toISOString()
     };
   }
 
-  // ✅ NEW: Method to reset statistics
+  // Method to reset statistics
   resetStats() {
     console.log('🔄 Resetting AI provider statistics...');
     this.stats = {
@@ -370,12 +502,12 @@ Return valid JSON only.`);
     console.log('✅ Statistics reset complete');
   }
 
-  // ✅ NEW: Method to check if any providers are available
+  // Method to check if any providers are available
   hasProviders() {
     return this.providers.size > 0;
   }
 
-  // ✅ NEW: Method to get best performing provider
+  // Method to get best performing provider
   getBestProvider() {
     if (this.providers.size === 0) {
       return null;
@@ -402,6 +534,46 @@ Return valid JSON only.`);
     }
 
     return bestProvider;
+  }
+
+  // 🔧 NEW: Method to force a real API test call
+  async testRealAPICall(provider = 'deepseek', testPrompt = null) {
+    if (!testPrompt) {
+      testPrompt = `Test real API call for HiggsFlow product enhancement. Part number: TEST-001. Return JSON: {
+  "detected_brand": "Test Brand",
+  "enhanced_name": "Test Product Enhanced",
+  "description": "This is a test product for API verification",
+  "confidence": 0.95,
+  "test_successful": true,
+  "timestamp": "${new Date().toISOString()}"
+}`;
+    }
+
+    console.log(`🧪 Testing REAL API call for ${provider}...`);
+    
+    try {
+      const result = await this.callAI(provider, testPrompt, {
+        temperature: 0.1,
+        maxTokens: 500,
+        timeout: 30000
+      });
+      
+      console.log(`✅ REAL API test successful for ${provider}:`, result);
+      return {
+        success: true,
+        provider,
+        result,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error(`❌ REAL API test failed for ${provider}:`, error.message);
+      return {
+        success: false,
+        provider,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 }
 
