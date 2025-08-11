@@ -1,4 +1,4 @@
-// routes/api.routes.js - ENHANCED: Proper AI Service Integration with Prompt Selector
+// routes/api.routes.js - FIXED: Real AI Service Integration with ALL Original Code Preserved
 const express = require('express');
 const router = express.Router();
 const upload = require('../config/multer');
@@ -10,7 +10,7 @@ const duplicateController = require('../controllers/duplicate.controller');
 const recommendationController = require('../controllers/recommendation.controller');
 const WebSearchService = require('../services/webSearchService');
 
-// ✅ FIXED: Import the correct AI services
+// ✅ PRESERVED: Import the correct AI services
 let MCPPromptService, UnifiedAIService, AIService;
 
 // Try to load MCP Prompt Service
@@ -21,10 +21,10 @@ try {
   console.warn('⚠️ MCPPromptService not found:', error.message);
 }
 
-// ✅ NEW: Load UnifiedAIService (this is what we need for AI processing)
+// ✅ CRITICAL: Load UnifiedAIService (this is what we need for REAL AI processing)
 try {
   UnifiedAIService = require('../services/ai/UnifiedAIService');
-  console.log('✅ UnifiedAIService loaded successfully');
+  console.log('✅ UnifiedAIService loaded successfully - REAL AI CALLS ENABLED');
 } catch (error) {
   console.warn('⚠️ UnifiedAIService not found:', error.message);
 }
@@ -37,18 +37,18 @@ try {
   console.warn('⚠️ Legacy AIService not found');
 }
 
-// ✅ NEW: Initialize the AI Service globally
+// ✅ CRITICAL: Initialize the AI Service globally for REAL AI processing
 let globalAIService = null;
 
 // Initialize AI Service on startup
 (async () => {
   try {
-    console.log('🚀 Initializing HiggsFlow AI Service for product enhancement...');
+    console.log('🚀 Initializing HiggsFlow AI Service for REAL AI enhancement...');
     
     if (UnifiedAIService) {
       globalAIService = new UnifiedAIService();
-      // Don't call initialize() here - let it initialize naturally when called
-      console.log('✅ HiggsFlow AI Service ready for product enhancement!');
+      await globalAIService.initPromise; // Wait for initialization
+      console.log('✅ HiggsFlow AI Service ready for REAL AI enhancement!');
     } else {
       console.warn('⚠️ UnifiedAIService not available, using pattern-based fallback only');
     }
@@ -58,7 +58,7 @@ let globalAIService = null;
   }
 })();
 
-// ✅ Helper function to get prompts directly from AI system
+// ✅ PRESERVED: Helper function to get prompts directly from AI system
 async function getPromptsDirectly() {
   try {
     // Method 1: Use the global AI service
@@ -175,7 +175,7 @@ OUTPUT ONLY VALID JSON:
   }
 }
 
-// ✅ NEW: Helper function to determine prompt specialization
+// ✅ PRESERVED: Helper function to determine prompt specialization
 function getPromptSpecialization(name, description) {
   const lowerName = name.toLowerCase();
   const lowerDesc = (description || '').toLowerCase();
@@ -197,7 +197,7 @@ function getPromptSpecialization(name, description) {
   }
 }
 
-// ✅ NEW: Helper function to calculate prompt confidence
+// ✅ PRESERVED: Helper function to calculate prompt confidence
 function calculatePromptConfidence(prompt) {
   // Base confidence based on prompt type
   let confidence = 0.85; // Base confidence
@@ -219,7 +219,7 @@ function calculatePromptConfidence(prompt) {
   return confidence;
 }
 
-// ✅ NEW: Helper function to get recommended use cases
+// ✅ PRESERVED: Helper function to get recommended use cases
 function getRecommendedFor(name) {
   const lowerName = name.toLowerCase();
   
@@ -236,7 +236,7 @@ function getRecommendedFor(name) {
   }
 }
 
-// ✅ NEW: Function to call AI with proper error handling
+// ✅ CRITICAL FIX: NEW function to call AI with proper error handling (REAL AI CALLS)
 async function callAIForEnhancement(prompt, promptData, selectedPrompt) {
   if (!globalAIService) {
     throw new Error('AI Service not available');
@@ -249,37 +249,17 @@ async function callAIForEnhancement(prompt, promptData, selectedPrompt) {
     processedPrompt = processedPrompt.replace(new RegExp(placeholder, 'g'), promptData[key]);
   });
 
-  // Call the AI service
+  // Call the AI service with REAL API calls
   console.log(`🤖 Calling ${selectedPrompt.aiProvider} for product enhancement...`);
   
-  // Create a simple AI request object that mimics the old AIService interface
-  const aiRequest = {
-    chat: async (prompt, options = {}) => {
-      // This will need to be implemented based on your UnifiedAIService structure
-      // For now, return a mock response
-      return JSON.stringify({
-        detected_brand: "Siemens",
-        brand_confidence: 0.95,
-        detected_category: "networking",
-        category_confidence: 0.92,
-        enhanced_name: `Enhanced Product ${promptData.partNumber}`,
-        enhanced_description: `AI-enhanced description for ${promptData.partNumber}`,
-        specifications: {
-          manufacturer: "AI-detected",
-          category: "AI-classified"
-        },
-        enhancement_quality_score: 90,
-        confidence_analysis: "AI analysis completed successfully"
-      });
-    }
-  };
-
-  return await aiRequest.chat(processedPrompt, {
-    provider: selectedPrompt.aiProvider || 'deepseek',
+  // ✅ CRITICAL FIX: Make actual AI API call instead of mock response
+  const aiResult = await globalAIService.enhanceProduct(promptData, processedPrompt, {
+    aiProvider: selectedPrompt.aiProvider || 'deepseek',
     temperature: selectedPrompt.temperature || 0.1,
-    max_tokens: selectedPrompt.maxTokens || 2500,
-    timeout: 15000
+    maxTokens: selectedPrompt.maxTokens || 2500
   });
+
+  return aiResult.result || aiResult; // Return the actual AI response
 }
 
 /// Enhanced health check
@@ -315,55 +295,56 @@ router.get('/health', (req, res) => {
       categoryManagement: true,
       productEnhancement: true,
       mcpPromptSystem: !!MCPPromptService,
-      unifiedAI: !!globalAIService // ✅ NEW: Indicate UnifiedAI availability
+      unifiedAI: !!globalAIService, // ✅ PRESERVED: Indicate UnifiedAI availability
+      realAIProductEnhancement: !!globalAIService // ✅ NEW: Real AI status
     }
   });
 });
 
-// Extraction endpoints
+// ✅ PRESERVED: All extraction endpoints
 router.post('/extract-po', upload.single('pdf'), extractionController.extractFromPDF);
 router.post('/extract-image', upload.single('image'), extractionController.extractFromImage);
 router.post('/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
 router.post('/extract-email', upload.single('email'), extractionController.extractFromEmail);
 
-// Get current prompt system status for a user
+// ✅ PRESERVED: Get current prompt system status for a user
 router.get('/prompt-system-status', extractionController.getPromptSystemStatus);
 
-// Set user's prompt system preference  
+// ✅ PRESERVED: Set user's prompt system preference  
 router.post('/set-prompt-system-preference', extractionController.setPromptSystemPreference);
 
-// Get prompt system analytics and performance data
+// ✅ PRESERVED: Get prompt system analytics and performance data
 router.get('/prompt-system-analytics', extractionController.getPromptSystemAnalytics);
 
-// Test extraction with specific system (single file)
+// ✅ PRESERVED: Test extraction with specific system (single file)
 router.post('/test-extraction', upload.single('pdf'), extractionController.testExtraction);
 
-// Batch comparison test (multiple files)
+// ✅ PRESERVED: Batch comparison test (multiple files)
 router.post('/batch-comparison-test', upload.array('files', 10), extractionController.batchComparisonTest);
 
-// Duplicate and recommendations
+// ✅ PRESERVED: Duplicate and recommendations
 router.post('/check-duplicate', duplicateController.checkDuplicate);
 router.post('/get-recommendations', recommendationController.getRecommendations);
 
-// Learning and categorization
+// ✅ PRESERVED: Learning and categorization
 router.post('/save-correction', recommendationController.saveCorrection);
 router.post('/detect-category', recommendationController.detectCategory);
 
-// Bank payment extraction
+// ✅ PRESERVED: Bank payment extraction
 router.post('/bank-payments/extract', upload.single('file'), extractionController.extractBankPaymentSlip);
 
 // ================================================================
-// ✅ ENHANCED: PRODUCT ENHANCEMENT ENDPOINT WITH PROMPT SELECTOR SUPPORT
+// ✅ CRITICAL FIX: PRODUCT ENHANCEMENT ENDPOINT WITH REAL AI CALLS (REPLACING STATIC RESPONSE)
 // ================================================================
 
 router.post('/enhance-product', async (req, res) => {
   try {
-    const { productData, userEmail, metadata, forcedPromptId } = req.body; // ✅ NEW: Support forced prompt
+    const { productData, userEmail, metadata, forcedPromptId } = req.body; // ✅ PRESERVED: Support forced prompt
     
     console.log('🚀 MCP Product Enhancement Request:', {
       partNumber: productData.partNumber,
       userEmail: userEmail,
-      forcedPromptId: forcedPromptId, // ✅ NEW: Log forced prompt
+      forcedPromptId: forcedPromptId, // ✅ PRESERVED: Log forced prompt
       timestamp: new Date().toISOString()
     });
     
@@ -382,7 +363,7 @@ router.post('/enhance-product', async (req, res) => {
         if (productPrompts && productPrompts.length > 0) {
           console.log(`📝 Found ${productPrompts.length} product enhancement prompts`);
           
-          // ✅ NEW: Support forced prompt selection
+          // ✅ PRESERVED: Support forced prompt selection
           if (forcedPromptId) {
             selectedPrompt = productPrompts.find(p => p.id === forcedPromptId);
             if (selectedPrompt) {
@@ -392,7 +373,7 @@ router.post('/enhance-product', async (req, res) => {
             }
           }
           
-          // ✅ Smart prompt selection for Siemens parts (if no forced prompt)
+          // ✅ PRESERVED: Smart prompt selection for Siemens parts (if no forced prompt)
           if (!selectedPrompt && productData.partNumber && productData.partNumber.match(/^(6XV|6ES|3SE)/i)) {
             selectedPrompt = productPrompts.find(p => 
               p.name.toLowerCase().includes('siemens')
@@ -416,9 +397,9 @@ router.post('/enhance-product', async (req, res) => {
           if (selectedPrompt) {
             console.log(`🎯 Selected prompt: ${selectedPrompt.name}`);
             
-            // ✅ FIXED: Check if globalAIService is available
+            // ✅ CRITICAL FIX: Check if globalAIService is available and make REAL AI calls
             if (globalAIService) {
-              console.log('✅ AI Service available, proceeding with AI enhancement...');
+              console.log('✅ AI Service available, proceeding with REAL AI enhancement...');
               
               try {
                 // Prepare the prompt template data
@@ -432,7 +413,7 @@ router.post('/enhance-product', async (req, res) => {
                 
                 const startTime = Date.now();
                 
-                // ✅ FIXED: Call AI using the proper service
+                // ✅ CRITICAL FIX: Call REAL AI using the proper service
                 const aiResponse = await callAIForEnhancement(
                   selectedPrompt.prompt,
                   promptData,
@@ -440,26 +421,25 @@ router.post('/enhance-product', async (req, res) => {
                 );
                 
                 const processingTime = Date.now() - startTime;
-                console.log(`✅ AI response received in ${processingTime}ms`);
+                console.log(`✅ REAL AI response received in ${processingTime}ms`); // ✅ FIXED: Real timing
                 
-                // ✅ Parse AI response
+                // ✅ PRESERVED: Parse AI response
                 let extractedData;
                 try {
-                  const cleanResponse = aiResponse
-                    .replace(/```json\s*\n?/g, '')
-                    .replace(/```\s*\n?/g, '')
-                    .trim();
+                  const cleanResponse = typeof aiResponse === 'string' ? 
+                    aiResponse.replace(/```json\s*\n?/g, '').replace(/```\s*\n?/g, '').trim() : 
+                    JSON.stringify(aiResponse);
                   
-                  extractedData = JSON.parse(cleanResponse);
+                  extractedData = typeof aiResponse === 'string' ? JSON.parse(cleanResponse) : aiResponse;
                   console.log('✅ AI response parsed successfully');
                   
                 } catch (parseError) {
                   console.error('❌ Failed to parse AI response:', parseError);
-                  console.log('Raw AI response:', aiResponse.substring(0, 500));
+                  console.log('Raw AI response:', JSON.stringify(aiResponse).substring(0, 500));
                   throw parseError;
                 }
                 
-                // ✅ Calculate confidence score
+                // ✅ PRESERVED: Calculate confidence score
                 const confidenceScore = Math.min(
                   ((extractedData.brand_confidence || 0.5) + 
                    (extractedData.category_confidence || 0.5) + 
@@ -467,40 +447,41 @@ router.post('/enhance-product', async (req, res) => {
                   0.95
                 );
                 
-                // ✅ Return AI-enhanced response
+                // ✅ CRITICAL FIX: Return REAL AI-enhanced response with actual timing
                 const response = {
                   success: true,
                   extractedData: extractedData,
                   metadata: {
-                    processing_time: `${processingTime}ms`,
+                    processing_time: `${processingTime}ms`, // ✅ FIXED: Real processing time
                     prompt_used: selectedPrompt.name,
-                    prompt_id: selectedPrompt.id, // ✅ NEW: Include prompt ID
+                    prompt_id: selectedPrompt.id, // ✅ PRESERVED: Include prompt ID
                     ai_provider: selectedPrompt.aiProvider,
                     mcp_version: '3.1',
-                    extraction_method: 'unified_ai_enhancement',
+                    extraction_method: 'real_ai_enhancement', // ✅ FIXED: Real method
                     user_email: userEmail,
                     timestamp: new Date().toISOString(),
                     enhancement_type: 'ai_analysis',
                     original_part_number: productData.partNumber,
-                    forced_prompt: !!forcedPromptId // ✅ NEW: Track if prompt was forced
+                    forced_prompt: !!forcedPromptId, // ✅ PRESERVED: Track if prompt was forced
+                    realAPICall: true // ✅ NEW: Confirmation of real API call
                   },
-                  confidence_score: confidenceScore,
+                  confidence_score: confidenceScore, // ✅ FIXED: Real confidence from AI
                   
                   performance: {
-                    searchTime: processingTime,
+                    searchTime: processingTime, // ✅ FIXED: Real processing time
                     confidenceLevel: confidenceScore >= 0.8 ? 'high' : confidenceScore >= 0.6 ? 'medium' : 'low',
                     dataQuality: extractedData.specifications && Object.keys(extractedData.specifications).length > 2 ? 'detailed' : 'basic',
                     enhancementScore: extractedData.enhancement_quality_score || 0
                   }
                 };
                 
-                console.log('✅ AI Product Enhancement Complete:', {
+                console.log('✅ REAL AI Product Enhancement Complete:', {
                   partNumber: productData.partNumber,
                   brand: extractedData.detected_brand,
                   confidence: confidenceScore,
-                  processingTime: `${processingTime}ms`,
+                  processingTime: `${processingTime}ms`, // ✅ FIXED: Real timing
                   prompt: selectedPrompt.name,
-                  forced: !!forcedPromptId // ✅ NEW: Log if prompt was forced
+                  forced: !!forcedPromptId // ✅ PRESERVED: Log if prompt was forced
                 });
                 
                 return res.json(response);
@@ -523,7 +504,7 @@ router.post('/enhance-product', async (req, res) => {
       console.log('🔄 Falling back to pattern enhancement');
     }
     
-    // ✅ Fallback to enhanced pattern-based enhancement
+    // ✅ PRESERVED: Fallback to enhanced pattern-based enhancement
     console.log('🔄 Using enhanced pattern-based enhancement...');
     const enhancedData = await enhanceProductDataFallback(productData);
     
@@ -569,7 +550,7 @@ router.post('/enhance-product', async (req, res) => {
   }
 });
 
-// ✅ ENHANCED: Product Enhancement Status Endpoint with Prompt Selector Support
+// ✅ PRESERVED: Product Enhancement Status Endpoint with Prompt Selector Support
 router.get('/product-enhancement-status', async (req, res) => {
   try {
     const { userEmail } = req.query;
@@ -582,7 +563,7 @@ router.get('/product-enhancement-status', async (req, res) => {
     let promptInfo = null;
     let systemStatus = 'pattern_fallback';
     let availablePrompts = 0;
-    let availablePromptsList = []; // ✅ NEW: Array for prompt selector
+    let availablePromptsList = []; // ✅ PRESERVED: Array for prompt selector
     
     try {
       const allPrompts = await getPromptsDirectly();
@@ -600,7 +581,7 @@ router.get('/product-enhancement-status', async (req, res) => {
           availablePrompts = productPrompts.length;
           console.log(`📝 Found ${productPrompts.length} product enhancement prompts`);
           
-          // ✅ NEW: Build available prompts list with metadata
+          // ✅ PRESERVED: Build available prompts list with metadata
           availablePromptsList = productPrompts.map(prompt => ({
             id: prompt.id,
             name: prompt.name,
@@ -631,7 +612,7 @@ router.get('/product-enhancement-status', async (req, res) => {
               id: userPrompt.id,
               specialized_for: getPromptSpecialization(userPrompt.name, userPrompt.description)
             };
-            systemStatus = globalAIService ? 'unified_ai_enhanced' : 'mcp_enhanced';
+            systemStatus = globalAIService ? 'real_ai_enhanced' : 'mcp_enhanced'; // ✅ FIXED: Real AI status
             console.log(`🎯 Selected prompt: ${userPrompt.name}`);
           }
         }
@@ -640,14 +621,14 @@ router.get('/product-enhancement-status', async (req, res) => {
       console.warn('⚠️ Direct prompt access failed:', promptError.message);
     }
     
-    // ✅ ENHANCED: Always return a successful response with prompt list
+    // ✅ PRESERVED: Always return a successful response with prompt list
     const response = {
       status: 'available',
       user_email: userEmail,
       current_system: systemStatus,
       selected_prompt: promptInfo,
       available_prompts: availablePrompts,
-      available_prompts_list: availablePromptsList, // ✅ NEW: Full prompt list for selector
+      available_prompts_list: availablePromptsList, // ✅ PRESERVED: Full prompt list for selector
       capabilities: [
         'brand_detection',
         'category_classification', 
@@ -670,7 +651,7 @@ router.get('/product-enhancement-status', async (req, res) => {
         typical_response_time: systemStatus.includes('enhanced') ? '2-5 seconds' : '1-2 seconds',
         expected_accuracy: systemStatus.includes('enhanced') ? '95%+' : '70-85%',
         confidence_scoring: 'enabled',
-        enhancement_method: systemStatus.includes('enhanced') ? 'AI-powered' : 'Pattern-based'
+        enhancement_method: systemStatus.includes('real_ai') ? 'Real AI-powered' : systemStatus.includes('enhanced') ? 'AI-powered' : 'Pattern-based' // ✅ FIXED
       },
       system_info: {
         prompt_service_available: true,
@@ -678,7 +659,8 @@ router.get('/product-enhancement-status', async (req, res) => {
         ai_service_available: !!AIService,
         fallback_ready: true,
         version: '2.0',
-        last_check: new Date().toISOString()
+        last_check: new Date().toISOString(),
+        real_ai_available: !!globalAIService // ✅ NEW: Real AI availability
       }
     };
     
@@ -688,7 +670,7 @@ router.get('/product-enhancement-status', async (req, res) => {
       userEmail,
       availablePrompts,
       promptsListLength: availablePromptsList.length,
-      aiServiceReady: !!globalAIService
+      realAIServiceReady: !!globalAIService // ✅ FIXED: Real AI status
     });
     
     res.json(response);
@@ -696,7 +678,7 @@ router.get('/product-enhancement-status', async (req, res) => {
   } catch (error) {
     console.error('❌ Product Enhancement Status Error:', error);
     
-    // ✅ Even on error, return useful fallback status
+    // ✅ PRESERVED: Even on error, return useful fallback status
     res.status(200).json({
       status: 'basic',
       user_email: req.query.userEmail,
@@ -704,7 +686,7 @@ router.get('/product-enhancement-status', async (req, res) => {
       message: 'Using pattern-based enhancement',
       selected_prompt: null,
       available_prompts: 0,
-      available_prompts_list: [], // ✅ NEW: Empty array for fallback
+      available_prompts_list: [], // ✅ PRESERVED: Empty array for fallback
       capabilities: ['basic_brand_detection', 'category_classification', 'pattern_analysis'],
       performance: {
         typical_response_time: '1-2 seconds',
@@ -721,7 +703,7 @@ router.get('/product-enhancement-status', async (req, res) => {
   }
 });
 
-// ✅ Enhanced health check endpoint for product enhancement system
+// ✅ PRESERVED: Enhanced health check endpoint for product enhancement system
 router.get('/product-enhancement-health', async (req, res) => {
   try {
     const health = {
@@ -741,11 +723,12 @@ router.get('/product-enhancement-health', async (req, res) => {
       version: '2.0.0',
       capabilities: {
         mcp_integration: !!MCPPromptService,
+        real_ai_enhancement: !!globalAIService, // ✅ FIXED: Real AI capability
         unified_ai_enhancement: !!globalAIService,
         legacy_ai_enhancement: !!AIService,
         pattern_analysis: true,
         fallback_protection: true,
-        prompt_selector: true // ✅ NEW: Indicate prompt selector support
+        prompt_selector: true // ✅ PRESERVED: Indicate prompt selector support
       }
     };
     
@@ -756,14 +739,14 @@ router.get('/product-enhancement-health', async (req, res) => {
         health.ai_test = {
           prompts_found: Array.isArray(prompts) ? prompts.length : 0,
           test_successful: true,
-          service_type: 'unified_ai'
+          service_type: 'real_ai' // ✅ FIXED
         };
       } catch (testError) {
         health.ai_test = {
           prompts_found: 0,
           test_successful: false,
           error: testError.message,
-          service_type: 'unified_ai'
+          service_type: 'real_ai' // ✅ FIXED
         };
       }
     }
@@ -779,13 +762,107 @@ router.get('/product-enhancement-health', async (req, res) => {
   }
 });
 
-// ✅ Keep your existing enhanced pattern fallback function (unchanged)
+// ✅ NEW: Nuclear test endpoint to verify AI service is working
+router.post('/nuclear-test', async (req, res) => {
+  try {
+    console.log('🚀 NUCLEAR TEST: Testing REAL AI API connection...');
+    
+    if (!globalAIService) {
+      throw new Error('AI Service not initialized');
+    }
+    
+    const startTime = Date.now();
+    
+    // Test with a simple product enhancement
+    const testResult = await globalAIService.enhanceProduct(
+      { 
+        partNumber: '6XV1830-3EH10',
+        name: 'Test Product',
+        brand: 'Siemens',
+        description: 'Test description',
+        category: 'networking'
+      },
+      'Analyze this Siemens industrial product: {{partNumber}}. Provide detailed specifications.',
+      {
+        aiProvider: 'deepseek',
+        temperature: 0.1,
+        maxTokens: 500
+      }
+    );
+    
+    const testTime = Date.now() - startTime;
+    
+    console.log(`✅ NUCLEAR TEST PASSED: Real AI response in ${testTime}ms`);
+    
+    res.json({
+      success: true,
+      message: 'NUCLEAR TEST PASSED - REAL AI API WORKING',
+      testTime: testTime + 'ms',
+      aiService: 'UnifiedAIService',
+      provider: 'deepseek',
+      apiKey: process.env.DEEPSEEK_API_KEY ? 
+        `${process.env.DEEPSEEK_API_KEY.substring(0, 8)}...${process.env.DEEPSEEK_API_KEY.slice(-4)}` : 
+        'NOT CONFIGURED',
+      result: testResult ? 'AI Response Received' : 'No Response',
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error('❌ NUCLEAR TEST FAILED:', error);
+    res.status(500).json({
+      success: false,
+      message: 'NUCLEAR TEST FAILED - AI API NOT WORKING',
+      error: error.message,
+      aiService: globalAIService ? 'Available' : 'Not Available',
+      apiKey: process.env.DEEPSEEK_API_KEY ? 'Configured' : 'Not Configured',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// ✅ NEW: Debug endpoint to find the exact source of 0ms responses
+router.post('/find-problem', (req, res) => {
+  console.log('🔍 Debug endpoint called - starting stack trace monitoring...');
+  
+  // Override console.log to catch the 0ms message and show stack trace
+  const originalConsoleLog = console.log;
+  console.log = function(...args) {
+    const message = args.join(' ');
+    
+    // Check for the exact 0ms message
+    if (message.includes('✅ AI response received in 0ms')) {
+      console.error('🚨🚨🚨 FOUND THE EXACT SOURCE OF 0ms! 🚨🚨🚨');
+      console.error('🚨 Message:', message);
+      console.error('🚨 STACK TRACE (showing exact file and line):');
+      console.error(new Error('SOURCE LOCATION TRACE').stack);
+      console.error('🚨🚨🚨 END SOURCE TRACE 🚨🚨🚨');
+    }
+    
+    // Call original console.log
+    originalConsoleLog.apply(console, args);
+  };
+  
+  console.log('✅ Stack trace monitoring ENABLED');
+  
+  res.json({ 
+    success: true,
+    message: 'Debug stack trace monitoring enabled!',
+    instructions: [
+      '1. This endpoint is now monitoring all console.log calls',
+      '2. Call /api/enhance-product with your test data',
+      '3. Check Railway logs immediately for stack traces',
+      '4. Look for "🚨🚨🚨 FOUND THE EXACT SOURCE OF 0ms!" messages'
+    ]
+  });
+});
+
+// ✅ PRESERVED: Keep your existing enhanced pattern fallback function (unchanged)
 async function enhanceProductDataFallback(productData) {
   const partNumber = productData.partNumber || '';
   
   console.log(`🔍 Pattern analysis for part number: ${partNumber}`);
   
-  // ✅ ENHANCED: Siemens Industrial Ethernet Cables (6XV series) - Your specific case
+  // ✅ PRESERVED: Siemens Industrial Ethernet Cables (6XV series) - Your specific case
   if (partNumber.match(/^6XV/i)) {
     return {
       detected_brand: "Siemens",
@@ -813,7 +890,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: Siemens SIMATIC Automation (6ES series)
+  // ✅ PRESERVED: Siemens SIMATIC Automation (6ES series)
   else if (partNumber.match(/^6ES/i)) {
     return {
       detected_brand: "Siemens",
@@ -838,7 +915,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: Siemens Safety Technology (3SE series)
+  // ✅ PRESERVED: Siemens Safety Technology (3SE series)
   else if (partNumber.match(/^3SE/i)) {
     return {
       detected_brand: "Siemens",
@@ -861,7 +938,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: SKF Bearings with detailed pattern recognition
+  // ✅ PRESERVED: SKF Bearings with detailed pattern recognition
   else if (partNumber.match(/^(SKF|NJ|NU|NUP|6\d{3}|32\d{3})/i)) {
     const brand = partNumber.startsWith('SKF') ? 'SKF' : 'SKF';
     let bearingType = 'Industrial Bearing';
@@ -895,7 +972,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: ABB Drives (ACS series)
+  // ✅ PRESERVED: ABB Drives (ACS series)
   else if (partNumber.match(/^ACS\d{3}/i)) {
     return {
       detected_brand: "ABB",
@@ -918,7 +995,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: Schneider Electric (TM, LC1 series)
+  // ✅ PRESERVED: Schneider Electric (TM, LC1 series)
   else if (partNumber.match(/^(TM|LC1|XB\d)/i)) {
     return {
       detected_brand: "Schneider Electric",
@@ -939,7 +1016,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: Omron (E3, CP1, MY series)
+  // ✅ PRESERVED: Omron (E3, CP1, MY series)
   else if (partNumber.match(/^(E3|CP1|MY\d)/i)) {
     return {
       detected_brand: "Omron",
@@ -960,7 +1037,7 @@ async function enhanceProductDataFallback(productData) {
     };
   }
   
-  // ✅ ENHANCED: Generic/Unknown parts with better analysis
+  // ✅ PRESERVED: Generic/Unknown parts with better analysis
   else {
     let categoryGuess = "components";
     let confidence = 0.4;
@@ -1005,7 +1082,7 @@ async function enhanceProductDataFallback(productData) {
 }
 
 // ================================================================
-// ENHANCED WEB SEARCH ENDPOINTS (KEEPING YOUR EXISTING LOGIC)
+// ✅ PRESERVED: ALL WEB SEARCH ENDPOINTS (KEEPING YOUR EXISTING LOGIC)
 // ================================================================
 
 // Main web search endpoint for product enhancement
@@ -1095,7 +1172,7 @@ router.post('/web-search', async (req, res) => {
   }
 });
 
-// Health check endpoint specifically for web search functionality
+// ✅ PRESERVED: Health check endpoint specifically for web search functionality
 router.get('/web-search/health', (req, res) => {
   res.json({
     status: 'healthy',
@@ -1137,7 +1214,7 @@ router.get('/web-search/health', (req, res) => {
   });
 });
 
-// Test endpoint for web search functionality with predefined test cases
+// ✅ PRESERVED: Test endpoint for web search functionality with predefined test cases
 router.post('/web-search/test', async (req, res) => {
   try {
     console.log('🧪 Running web search test suite...');
@@ -1225,7 +1302,7 @@ router.post('/web-search/test', async (req, res) => {
   }
 });
 
-// Bulk web search endpoint for multiple part numbers
+// ✅ PRESERVED: Bulk web search endpoint for multiple part numbers
 router.post('/web-search/bulk', async (req, res) => {
   try {
     const { partNumbers, defaultBrand } = req.body;
@@ -1307,7 +1384,7 @@ router.post('/web-search/bulk', async (req, res) => {
   }
 });
 
-// Error handling for file upload
+// ✅ PRESERVED: Error handling for file upload
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
@@ -1334,5 +1411,5 @@ router.use((error, req, res, next) => {
   next(error);
 });
 
-// ✅ Export just the router since category initialization is handled in server.js
+// ✅ PRESERVED: Export just the router since category initialization is handled in server.js
 module.exports = router;
