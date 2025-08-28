@@ -592,7 +592,7 @@ app.get('/api/ai/prompts', async (req, res) => {
       });
     }
 
-    const promptsSnapshot = await getDocs(collection(db, 'prompts'));
+    const promptsSnapshot = await getDocs(collection(db, 'ai-prompts'));
     const prompts = [];
     
     promptsSnapshot.forEach((doc) => {
@@ -767,7 +767,7 @@ app.get('/health', async (req, res) => {
     try {
       if (firebaseApp && db) {
         const { collection, getDocs, limit, query } = require('firebase/firestore');
-        const testQuery = query(collection(db, 'prompts'), limit(1));
+        const testQuery = query(collection(db, 'ai-prompts'), limit(1));
         await getDocs(testQuery);
         
         const categoriesQuery = query(collection(db, 'categories'), limit(1));
