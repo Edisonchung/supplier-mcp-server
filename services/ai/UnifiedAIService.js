@@ -128,11 +128,116 @@ class UnifiedAIService extends EventEmitter {
     return providers.length > 0 ? providers : ['deepseek', 'openai', 'anthropic'];
   }
 
-  // NEW: Image generation method (required by server.js)
+  // NEW: DeepSeek fallback for image specifications
+  async callDeepSeekImageFallback(prompt, options = {}) {
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      throw new Error('DeepSeek API key not configured (DEEPSEEK_API_KEY)');
+    }
+
+    const startTime = Date.now();
+    console.log('🤖 Generating detailed image specifications via DeepSeek...');
+
+    try {
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            {
+              role: 'user',
+              content: `Create detailed technical specifications for this industrial image: "${prompt}"
+
+Return a JSON object with:
+{
+  "imageDescription": "Detailed visual description of the industrial component/scene",
+  "technicalSpecs": "Technical specifications and features",
+  "lightingSetup": "Professional lighting requirements",
+  "cameraSettings": "Recommended camera settings and angles", 
+  "safetyCompliance": "Industrial safety features visible",
+  "materialFinishes": "Surface treatments and materials",
+  "placeholderUrl": "A professional placeholder URL for testing"
+}
+
+Focus on industrial authenticity, brand-free compliance, and professional photography standards.`
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 1000,
+          stream: false
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`DeepSeek API error (${response.status}): ${errorData}`);
+      }
+
+      const data = await response.json();
+      const processingTime = Date.now() - startTime;
+      
+      console.log(`✅ DeepSeek image specifications generated in ${processingTime}ms`);
+      
+      let specifications;
+      try {
+        // Try to parse as JSON first
+        const responseText = data.choices[0]?.message?.content || '';
+        const cleanedResponse = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+        specifications = JSON.parse(cleanedResponse);
+      } catch (parseError) {
+        // Fallback to raw text if JSON parsing fails
+        specifications = {
+          imageDescription: data.choices[0]?.message?.content || 'Professional industrial component in clean facility setting',
+          technicalSpecs: 'Industrial grade component with professional specifications',
+          placeholderUrl: `https://via.placeholder.com/1024x1024/34495E/ECF0F1?text=Industrial+Component+%0ADeepSeek+Specification`
+        };
+      }
+
+      return {
+        specifications: specifications,
+        processingTime: processingTime,
+        fallbackMode: 'deepseek_specification'
+      };
+      
+    } catch (error) {
+      const processingTime = Date.now() - startTime;
+      console.error(`❌ DeepSeek specification generation failed after ${processingTime}ms:`, error.message);
+      throw error;
+    }
+  }
+
+  // NEW: Mock image generation for testing
+  async generateMockImage(prompt, options = {}) {
+    const startTime = Date.now();
+    console.log('🎭 Generating mock image for testing...');
+
+    // Simulate processing time
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    const processingTime = Date.now() - startTime;
+    
+    // Create professional mock image URL
+    const encodedText = encodeURIComponent('Industrial Component\n\nMock Image\nFor Testing\n\nAdd OpenAI Credits\nFor Real Images');
+    const mockImageUrl = `https://via.placeholder.com/1024x1024/2C3E50/ECF0F1?text=${encodedText}`;
+    
+    console.log(`✅ Mock image generated in ${processingTime}ms`);
+    
+    return {
+      imageUrl: mockImageUrl,
+      processingTime: processingTime,
+      mock: true
+    };
+  }
+
+  // NEW: Enhanced image generation with multiple fallbacks
   async generateImage(options = {}) {
     await this.ensureReady();
 
-    const { prompt, style = 'realistic', size = '1024x1024', provider = 'openai' } = options;
+    const { prompt, style = 'realistic', size = '1024x1024', provider = 'auto' } = options;
 
     if (!prompt) {
       throw new Error('Prompt is required for image generation');
@@ -140,23 +245,113 @@ class UnifiedAIService extends EventEmitter {
 
     console.log(`🎨 Generating image with ${provider}: "${prompt}"`);
 
-    try {
-      const result = await this.callOpenAIImageAPI(prompt, { style, size });
+    // Try OpenAI first (if not explicitly requesting other provider)
+    if (provider === 'auto' || provider === 'openai') {
+      try {
+        const result = await this.callOpenAIImageAPI(prompt, { style, size });
+        console.log('✅ Image generated successfully via OpenAI');
+        
+        return {
+          imageUrl: result.imageUrl || result.url || result.data?.[0]?.url,
+          prompt: prompt,
+          style: style,
+          provider: 'openai',
+          timestamp: new Date().toISOString(),
+          success: true
+        };
 
-      console.log('✅ Image generated successfully');
+      } catch (openaiError) {
+        console.log('⚠️ OpenAI image generation failed:', openaiError.message);
+        
+        // Check if it's a billing/rate limit issue
+        const isBillingIssue = openaiError.message.includes('billing') || 
+                              openaiError.message.includes('limit') ||
+                              openaiError.message.includes('rate_limit_exceeded');
+
+        if (isBillingIssue && provider === 'auto') {
+          // Try DeepSeek specifications fallback
+          try {
+            console.log('🔄 Trying DeepSeek specifications fallback...');
+            const deepSeekResult = await this.callDeepSeekImageFallback(prompt, { style, size });
+            
+            return {
+              imageUrl: deepSeekResult.specifications.placeholderUrl || null,
+              prompt: prompt,
+              style: style,
+              provider: 'deepseek',
+              timestamp: new Date().toISOString(),
+              success: true,
+              fallbackMode: true,
+              fallbackReason: 'openai_billing_limit',
+              specifications: deepSeekResult.specifications,
+              message: 'Detailed specifications generated via DeepSeek - OpenAI billing required for actual images',
+              processingTime: deepSeekResult.processingTime
+            };
+          } catch (deepSeekError) {
+            console.log('⚠️ DeepSeek fallback also failed, using mock image:', deepSeekError.message);
+            
+            // Final fallback to mock
+            const mockResult = await this.generateMockImage(prompt, { style, size });
+            
+            return {
+              imageUrl: mockResult.imageUrl,
+              prompt: prompt,
+              style: style,
+              provider: 'mock',
+              timestamp: new Date().toISOString(),
+              success: true,
+              mockMode: true,
+              mockReason: 'all_providers_failed',
+              message: 'Mock image generated - OpenAI billing required, DeepSeek unavailable',
+              processingTime: mockResult.processingTime
+            };
+          }
+        } else {
+          throw openaiError;
+        }
+      }
+    }
+    
+    // Direct DeepSeek specifications request
+    if (provider === 'deepseek') {
+      try {
+        const result = await this.callDeepSeekImageFallback(prompt, { style, size });
+        
+        return {
+          imageUrl: result.specifications.placeholderUrl || null,
+          prompt: prompt,
+          style: style,
+          provider: 'deepseek',
+          timestamp: new Date().toISOString(),
+          success: true,
+          specifications: result.specifications,
+          message: 'Detailed image specifications generated via DeepSeek',
+          processingTime: result.processingTime
+        };
+      } catch (error) {
+        console.error('❌ DeepSeek specifications failed:', error);
+        throw new Error(`DeepSeek specifications failed: ${error.message}`);
+      }
+    }
+
+    // Direct mock request
+    if (provider === 'mock') {
+      const result = await this.generateMockImage(prompt, { style, size });
       
       return {
-        imageUrl: result.imageUrl || result.url || result.data?.[0]?.url,
+        imageUrl: result.imageUrl,
         prompt: prompt,
         style: style,
-        provider: provider,
-        timestamp: new Date().toISOString()
+        provider: 'mock',
+        timestamp: new Date().toISOString(),
+        success: true,
+        mockMode: true,
+        message: 'Mock image generated for testing',
+        processingTime: result.processingTime
       };
-
-    } catch (error) {
-      console.error(`❌ Image generation failed with ${provider}:`, error);
-      throw new Error(`Image generation failed: ${error.message}`);
     }
+
+    throw new Error(`Unsupported image generation provider: ${provider}`);
   }
 
   // NEW: OpenAI Image API implementation
