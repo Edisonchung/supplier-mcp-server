@@ -6,7 +6,7 @@ const path = require('path');
 // Load environment variables
 dotenv.config();
 
-// 🆕 ADD: Firebase initialization for prompt persistence
+// Firebase initialization for prompt persistence
 const { initializeApp } = require('firebase/app');
 const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp } = require('firebase/firestore');
 
@@ -34,7 +34,9 @@ try {
 }
 
 const app = express();
+// FIXED: Use Railway's dynamic port and bind to all interfaces
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0'; // This is the key fix for Railway
 
 // Middleware for timeout handling
 app.use((req, res, next) => {
@@ -48,13 +50,14 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// CORS middleware
+// FIXED: Updated CORS for Railway deployment
 app.use(cors({
   origin: [
     'http://localhost:3000',
     'http://localhost:5173', 
     'https://www.higgsflow.com',
     'https://higgsflow.com',
+    'https://supplier-mcp-server-production.up.railway.app', // Added Railway URL
     process.env.FRONTEND_URL
   ].filter(Boolean), // Remove any undefined values
   credentials: true
@@ -68,12 +71,16 @@ app.use((req, res, next) => {
   res.setHeader('X-HiggsFlow-AI-Version', '2.0.0');
   res.setHeader('X-Modular-AI-Enabled', 'true');
   res.setHeader('X-MCP-Version', '2.0.0');
-  res.setHeader('X-MCP-WebSocket', `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
+  // FIXED: Use external URL for WebSocket in production
+  const wsUrl = process.env.NODE_ENV === 'production' 
+    ? `wss://supplier-mcp-server-production.up.railway.app:${process.env.MCP_WS_PORT || 8081}/mcp`
+    : `ws://localhost:${process.env.MCP_WS_PORT || 8081}/mcp`;
+  res.setHeader('X-MCP-WebSocket', wsUrl);
   res.setHeader('X-Firebase-Enabled', firebaseApp ? 'true' : 'false');
   next();
 });
 
-// 🔧 CRITICAL DEBUG ENDPOINT - Add this BEFORE your other routes
+// CRITICAL DEBUG ENDPOINT - Add this BEFORE your other routes
 app.post('/api/find-problem', (req, res) => {
   console.log('🔍 Debug endpoint called - starting stack trace monitoring...');
   
@@ -128,7 +135,7 @@ app.post('/api/find-problem', (req, res) => {
   });
 });
 
-// 🔧 NUCLEAR TEST ENDPOINT - Direct API test to verify connectivity
+// NUCLEAR TEST ENDPOINT - Direct API test to verify connectivity
 app.post('/api/nuclear-test', async (req, res) => {
   const startTime = Date.now();
   console.log('🧪 NUCLEAR TEST: Starting direct DeepSeek API call...');
@@ -210,7 +217,7 @@ app.post('/api/nuclear-test', async (req, res) => {
   }
 });
 
-// ✅ NEW: Category Management Routes
+// Category Management Routes
 // Initialize default categories
 const initializeDefaultCategories = async () => {
   if (!db) {
@@ -551,7 +558,7 @@ app.get('/health', async (req, res) => {
       mcpStatus = { status: 'initializing', error: mcpError.message };
     }
     
-    // 🆕 ADD: Firebase/Prompt system health
+    // Firebase/Prompt system health
     let promptSystemHealth = { status: 'error', storage: 'fallback' };
     let categorySystemHealth = { status: 'error', storage: 'fallback' };
     try {
@@ -602,7 +609,7 @@ app.get('/health', async (req, res) => {
         mcp: mcpStatus.status,
         ai: 'active',
         promptSystem: promptSystemHealth.status,
-        categorySystem: categorySystemHealth.status, // ✅ NEW: Category system status
+        categorySystem: categorySystemHealth.status,
         firebase: firebaseApp ? 'active' : 'disabled'
       },
       ai: {
@@ -618,7 +625,6 @@ app.get('/health', async (req, res) => {
         capabilities: mcpStatus.capabilities || [],
         version: '2.0.0'
       },
-      // 🆕 ADD: Prompt system details
       promptSystem: {
         storage: promptSystemHealth.storage,
         persistence: promptSystemHealth.storage === 'firestore' ? 'permanent' : 'temporary',
@@ -626,7 +632,6 @@ app.get('/health', async (req, res) => {
         status: promptSystemHealth.status,
         error: promptSystemHealth.error || null
       },
-      // ✅ NEW: Category system details
       categorySystem: {
         storage: categorySystemHealth.storage,
         persistence: categorySystemHealth.storage === 'firestore' ? 'permanent' : 'temporary',
@@ -640,7 +645,6 @@ app.get('/health', async (req, res) => {
           delete: 'DELETE /api/categories/:id'
         }
       },
-      // 🆕 ADD: Firebase details
       firebase: {
         enabled: !!firebaseApp,
         projectId: firebaseConfig.projectId || 'none',
@@ -651,7 +655,6 @@ app.get('/health', async (req, res) => {
           storage: 'available'
         }
       },
-      // 🔧 NEW: Debug endpoints for troubleshooting
       debug: {
         endpoints: {
           findProblem: '/api/find-problem',
@@ -665,15 +668,16 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase-categories-debug', // ✅ NEW: Updated version with debug
+      version: '2.0.0-mcp-enhanced-firebase-categories-debug',
+      // FIXED: Updated endpoints for external access
       endpoints: {
         health: '/health',
         api: '/api',
         ai: '/api/ai',
         mcp: '/api/mcp',
-        categories: '/api/categories', // ✅ NEW: Category endpoints
-        debug: '/api/find-problem',     // 🔧 NEW: Debug endpoint
-        nuclearTest: '/api/nuclear-test', // 🔧 NEW: Direct API test
+        categories: '/api/categories',
+        debug: '/api/find-problem',
+        nuclearTest: '/api/nuclear-test',
         aiDocs: '/api/ai/docs',
         mcpDocs: '/api/mcp/docs',
         extraction: '/api/purchase-orders/extract',
@@ -681,7 +685,9 @@ app.get('/health', async (req, res) => {
         enhancedExtraction: '/api/ai/extract/purchase-order',
         enhancedPIExtraction: '/api/ai/extract/proforma-invoice',
         mcpExtraction: '/api/mcp/extract',
-        mcpWebSocket: `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`
+        mcpWebSocket: process.env.NODE_ENV === 'production' 
+          ? `wss://supplier-mcp-server-production.up.railway.app:${process.env.MCP_WS_PORT || 8081}/mcp`
+          : `ws://localhost:${process.env.MCP_WS_PORT || 8081}/mcp`
       },
       features: {
         modularAI: true,
@@ -696,10 +702,10 @@ app.get('/health', async (req, res) => {
         streamingSupport: true,
         websocketCommunication: true,
         persistentPrompts: promptSystemHealth.storage === 'firestore',
-        persistentCategories: categorySystemHealth.storage === 'firestore', // ✅ NEW: Category persistence
+        persistentCategories: categorySystemHealth.storage === 'firestore',
         firebaseIntegration: !!firebaseApp,
-        dynamicCategoryManagement: !!firebaseApp, // ✅ NEW: Dynamic categories feature
-        debugEndpoints: true // 🔧 NEW: Debug feature flag
+        dynamicCategoryManagement: !!firebaseApp,
+        debugEndpoints: true
       }
     });
   } catch (error) {
@@ -733,7 +739,7 @@ app.get('/health', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP, Firebase & Category Management + Debug Tools',
-    version: '2.0.0-mcp-enhanced-firebase-categories-debug', // ✅ NEW: Updated version
+    version: '2.0.0-mcp-enhanced-firebase-categories-debug',
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
@@ -746,18 +752,18 @@ app.get('/', (req, res) => {
       'Batch processing',
       'Streaming processes',
       'Persistent prompt storage (Firebase)',
-      'Dynamic category management', // ✅ NEW: Category feature
+      'Dynamic category management',
       'Zero data loss on deployments',
-      'Debug tools for troubleshooting' // 🔧 NEW: Debug feature
+      'Debug tools for troubleshooting'
     ],
     endpoints: {
       health: '/health',
       api: '/api',
       ai: '/api/ai',
       mcp: '/api/mcp',
-      categories: '/api/categories', // ✅ NEW: Category endpoint
-      debug: '/api/find-problem',     // 🔧 NEW: Debug endpoint
-      nuclearTest: '/api/nuclear-test', // 🔧 NEW: Direct API test
+      categories: '/api/categories',
+      debug: '/api/find-problem',
+      nuclearTest: '/api/nuclear-test',
       extraction: '/api/purchase-orders/extract',
       bankPaymentExtraction: '/api/bank-payments/extract',
       enhancedPOExtraction: '/api/ai/extract/purchase-order',
@@ -768,17 +774,17 @@ app.get('/', (req, res) => {
       mcpDocumentation: '/api/mcp/docs'
     },
     websocket: {
-      mcp: `ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`,
+      mcp: process.env.NODE_ENV === 'production' 
+        ? `wss://supplier-mcp-server-production.up.railway.app:${process.env.MCP_WS_PORT || 8081}/mcp`
+        : `ws://localhost:${process.env.MCP_WS_PORT || 8081}/mcp`,
       description: 'Real-time MCP communication and streaming'
     },
-    // 🆕 ADD: Persistence information
     persistence: {
       prompts: firebaseApp ? 'Firebase Firestore (permanent)' : 'File storage (temporary)',
-      categories: firebaseApp ? 'Firebase Firestore (permanent)' : 'Fallback data (temporary)', // ✅ NEW: Category persistence
+      categories: firebaseApp ? 'Firebase Firestore (permanent)' : 'Fallback data (temporary)',
       dataLoss: firebaseApp ? 'Protected from deployment resets' : 'May be lost on deployment',
       database: firebaseConfig.projectId || 'none'
     },
-    // ✅ NEW: Category management information
     categoryManagement: {
       enabled: !!firebaseApp,
       endpoints: {
@@ -795,7 +801,6 @@ app.get('/', (req, res) => {
         'Real-time updates'
       ]
     },
-    // 🔧 NEW: Debug tools information
     debugTools: {
       findProblem: {
         endpoint: '/api/find-problem',
@@ -849,7 +854,7 @@ app.use((err, req, res, next) => {
     });
   }
   
-  // 🆕 ADD: Firebase-specific errors
+  // Firebase-specific errors
   if (err.message && (err.message.includes('Firebase') || err.message.includes('Firestore'))) {
     return res.status(500).json({
       success: false,
@@ -858,7 +863,7 @@ app.use((err, req, res, next) => {
     });
   }
   
-  // ✅ NEW: Category-specific errors
+  // Category-specific errors
   if (err.message && err.message.includes('Category')) {
     return res.status(500).json({
       success: false,
@@ -881,18 +886,18 @@ app.use((req, res) => {
   });
 });
 
-// Start server with enhanced logging
-const server = app.listen(PORT, async () => {
-  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase + Categories + Debug) is running on port ${PORT}`);
+// FIXED: Start server with proper host binding for Railway
+const server = app.listen(PORT, HOST, async () => {
+  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase + Categories + Debug) is running on ${HOST}:${PORT}`);
   console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-  console.log(`🏦 Bank payment extraction: http://localhost:${PORT}/api/bank-payments/extract`);
+  console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
+  console.log(`🏦 Bank payment extraction: http://${HOST}:${PORT}/api/bank-payments/extract`);
   
-  // 🔧 NEW: Debug endpoints logging
+  // Debug endpoints logging
   console.log('\n🔧 DEBUG ENDPOINTS (NEW):');
-  console.log(`   🔍 POST http://localhost:${PORT}/api/find-problem - Enable 0ms source tracing`);
-  console.log(`   🧪 POST http://localhost:${PORT}/api/nuclear-test - Direct DeepSeek API test`);
+  console.log(`   🔍 POST http://${HOST}:${PORT}/api/find-problem - Enable 0ms source tracing`);
+  console.log(`   🧪 POST http://${HOST}:${PORT}/api/nuclear-test - Direct DeepSeek API test`);
   console.log(`   📋 These will help identify the exact source of instant responses`);
   
   // Initialize categories after server starts
@@ -900,7 +905,7 @@ const server = app.listen(PORT, async () => {
     await initializeDefaultCategories();
   }
   
-  // 🆕 ADD: Firebase status logging
+  // Firebase status logging
   console.log('\n🔥 Firebase Integration Status:');
   if (firebaseApp && db) {
     console.log(`   ✅ Firebase connected to project: ${firebaseConfig.projectId}`);
@@ -912,45 +917,49 @@ const server = app.listen(PORT, async () => {
     console.log(`   💡 Add Firebase environment variables to enable persistence`);
   }
   
-  // ✅ NEW: Category management endpoints
+  // Category management endpoints
   console.log('\n📁 Category Management endpoints:');
-  console.log(`   📋 GET  http://localhost:${PORT}/api/categories - List all categories`);
-  console.log(`   ➕ POST http://localhost:${PORT}/api/categories - Create new category`);
-  console.log(`   ✏️  PUT  http://localhost:${PORT}/api/categories/:id - Update category`);
-  console.log(`   🗑️  DEL  http://localhost:${PORT}/api/categories/:id - Delete category`);
+  console.log(`   📋 GET  http://${HOST}:${PORT}/api/categories - List all categories`);
+  console.log(`   ➕ POST http://${HOST}:${PORT}/api/categories - Create new category`);
+  console.log(`   ✏️  PUT  http://${HOST}:${PORT}/api/categories/:id - Update category`);
+  console.log(`   🗑️  DEL  http://${HOST}:${PORT}/api/categories/:id - Delete category`);
   
   // Log AI endpoints
   console.log('\n🤖 Modular AI endpoints:');
-  console.log(`   🏥 GET  http://localhost:${PORT}/api/ai/health - AI system health`);
-  console.log(`   🧪 GET  http://localhost:${PORT}/api/ai/test - Quick functionality test`);
-  console.log(`   📦 GET  http://localhost:${PORT}/api/ai/modules - Module management`);
-  console.log(`   📝 GET  http://localhost:${PORT}/api/ai/prompts - Prompt management`);
-  console.log(`   📄 POST http://localhost:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
-  console.log(`   📋 POST http://localhost:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
-  console.log(`   📚 GET  http://localhost:${PORT}/api/ai/docs - AI API documentation`);
-  console.log(`   🔄 POST http://localhost:${PORT}/api/ai/extract-po - Legacy compatibility`);
-  console.log(`   🔄 POST http://localhost:${PORT}/api/ai/extract-pi - Legacy compatibility`);
+  console.log(`   🏥 GET  http://${HOST}:${PORT}/api/ai/health - AI system health`);
+  console.log(`   🧪 GET  http://${HOST}:${PORT}/api/ai/test - Quick functionality test`);
+  console.log(`   📦 GET  http://${HOST}:${PORT}/api/ai/modules - Module management`);
+  console.log(`   📝 GET  http://${HOST}:${PORT}/api/ai/prompts - Prompt management`);
+  console.log(`   📄 POST http://${HOST}:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
+  console.log(`   📋 POST http://${HOST}:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
+  console.log(`   📚 GET  http://${HOST}:${PORT}/api/ai/docs - AI API documentation`);
+  console.log(`   📄 POST http://${HOST}:${PORT}/api/ai/extract-po - Legacy compatibility`);
+  console.log(`   📄 POST http://${HOST}:${PORT}/api/ai/extract-pi - Legacy compatibility`);
   
   // Log new MCP endpoints
   console.log('\n🔗 MCP endpoints (NEW):');
-  console.log(`   🔧 GET  http://localhost:${PORT}/api/mcp/status - MCP service status`);
-  console.log(`   📋 GET  http://localhost:${PORT}/api/mcp/capabilities - Available capabilities`);
-  console.log(`   🛠️  GET  http://localhost:${PORT}/api/mcp/tools - List MCP tools`);
-  console.log(`   ⚡ POST http://localhost:${PORT}/api/mcp/tools/execute - Execute MCP tool`);
-  console.log(`   📄 POST http://localhost:${PORT}/api/mcp/extract - Enhanced extraction`);
-  console.log(`   🏢 POST http://localhost:${PORT}/api/mcp/analyze/supplier - Supplier analysis`);
-  console.log(`   💡 POST http://localhost:${PORT}/api/mcp/recommendations - AI recommendations`);
-  console.log(`   📦 POST http://localhost:${PORT}/api/mcp/batch - Batch processing`);
-  console.log(`   🔄 POST http://localhost:${PORT}/api/mcp/stream - Streaming processes`);
-  console.log(`   📊 GET  http://localhost:${PORT}/api/mcp/monitor - System monitoring`);
-  console.log(`   📚 GET  http://localhost:${PORT}/api/mcp/docs - MCP API documentation`);
-  console.log(`   🌐 WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
+  console.log(`   🔧 GET  http://${HOST}:${PORT}/api/mcp/status - MCP service status`);
+  console.log(`   📋 GET  http://${HOST}:${PORT}/api/mcp/capabilities - Available capabilities`);
+  console.log(`   🛠️  GET  http://${HOST}:${PORT}/api/mcp/tools - List MCP tools`);
+  console.log(`   ⚡ POST http://${HOST}:${PORT}/api/mcp/tools/execute - Execute MCP tool`);
+  console.log(`   📄 POST http://${HOST}:${PORT}/api/mcp/extract - Enhanced extraction`);
+  console.log(`   🏢 POST http://${HOST}:${PORT}/api/mcp/analyze/supplier - Supplier analysis`);
+  console.log(`   💡 POST http://${HOST}:${PORT}/api/mcp/recommendations - AI recommendations`);
+  console.log(`   📦 POST http://${HOST}:${PORT}/api/mcp/batch - Batch processing`);
+  console.log(`   🔄 POST http://${HOST}:${PORT}/api/mcp/stream - Streaming processes`);
+  console.log(`   📊 GET  http://${HOST}:${PORT}/api/mcp/monitor - System monitoring`);
+  console.log(`   📚 GET  http://${HOST}:${PORT}/api/mcp/docs - MCP API documentation`);
   
-  // Environment variables check
+  // FIXED: WebSocket URL for different environments
+  const wsUrl = process.env.NODE_ENV === 'production' 
+    ? `wss://supplier-mcp-server-production.up.railway.app:${process.env.MCP_WS_PORT || 8081}/mcp`
+    : `ws://${HOST}:${process.env.MCP_WS_PORT || 8081}/mcp`;
+  console.log(`   🌐 WebSocket: ${wsUrl}`);
+  
+  // Environment variables check (rest of the existing code...)
   const requiredEnvVars = ['DEEPSEEK_API_KEY'];
   const optionalEnvVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_AI_API_KEY'];
   const mcpEnvVars = ['MCP_WS_PORT'];
-  // 🆕 ADD: Firebase environment variables
   const firebaseEnvVars = [
     'FIREBASE_API_KEY', 'FIREBASE_AUTH_DOMAIN', 'FIREBASE_PROJECT_ID',
     'FIREBASE_STORAGE_BUCKET', 'FIREBASE_MESSAGING_SENDER_ID', 'FIREBASE_APP_ID'
@@ -981,12 +990,11 @@ const server = app.listen(PORT, async () => {
   
   if (missingMCP.length > 0) {
     console.log('\n💡 MCP configuration using defaults:');
-    console.log(`   - MCP_WS_PORT: ${process.env.MCP_WS_PORT || 8080} (default)`);
+    console.log(`   - MCP_WS_PORT: ${process.env.MCP_WS_PORT || 8081} (default)`);
   } else {
     console.log('✅ MCP configuration complete');
   }
   
-  // 🆕 ADD: Firebase configuration check
   if (missingFirebase.length > 0) {
     console.log('\n⚠️  Firebase configuration incomplete:');
     console.log('   Missing variables (prompts & categories may be lost on deployment):');
@@ -1017,18 +1025,27 @@ const server = app.listen(PORT, async () => {
   console.log('   ✅ Batch processing capabilities');
   console.log('   ✅ Streaming process support');
   console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Persistent prompt storage (Firebase)`);
-  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Dynamic category management (Firebase)`); // ✅ NEW: Category feature status
+  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Dynamic category management (Firebase)`);
   console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Zero data loss on deployments`);
-  console.log('   ✅ Debug tools for troubleshooting 0ms responses'); // 🔧 NEW: Debug feature
+  console.log('   ✅ Debug tools for troubleshooting 0ms responses');
   
   console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase + Categories + Debug) ready for testing!');
-  console.log(`   Test: curl http://localhost:${PORT}/api/mcp/status`);
-  console.log(`   Categories: curl http://localhost:${PORT}/api/categories`); // ✅ NEW: Category test
-  console.log(`   Debug: curl -X POST http://localhost:${PORT}/api/find-problem`); // 🔧 NEW: Debug test
-  console.log(`   Nuclear: curl -X POST http://localhost:${PORT}/api/nuclear-test`); // 🔧 NEW: API test
-  console.log(`   Docs: http://localhost:${PORT}/api/mcp/docs`);
-  console.log(`   WebSocket: ws://localhost:${process.env.MCP_WS_PORT || 8080}/mcp`);
+  console.log(`   Test: curl http://${HOST}:${PORT}/api/mcp/status`);
+  console.log(`   Categories: curl http://${HOST}:${PORT}/api/categories`);
+  console.log(`   Debug: curl -X POST http://${HOST}:${PORT}/api/find-problem`);
+  console.log(`   Nuclear: curl -X POST http://${HOST}:${PORT}/api/nuclear-test`);
+  console.log(`   Docs: http://${HOST}:${PORT}/api/mcp/docs`);
+  console.log(`   WebSocket: ${wsUrl}`);
   console.log(`   Firebase: ${firebaseApp ? 'Connected' : 'Not configured'}`);
+  
+  // FIXED: Log external URLs for Railway
+  if (process.env.NODE_ENV === 'production') {
+    console.log('\n🌐 EXTERNAL URLs (Railway):');
+    console.log('   🔗 Health: https://supplier-mcp-server-production.up.railway.app/health');
+    console.log('   📊 Status: https://supplier-mcp-server-production.up.railway.app/api/mcp/status');
+    console.log('   📋 Categories: https://supplier-mcp-server-production.up.railway.app/api/categories');
+    console.log('   🧪 Nuclear: https://supplier-mcp-server-production.up.railway.app/api/nuclear-test');
+  }
 });
 
 // Graceful shutdown
