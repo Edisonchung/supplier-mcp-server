@@ -78,13 +78,13 @@ try {
   console.warn('This is often due to WebSocket port conflicts in Railway');
 }
 
-// *** CRITICAL FIX: Prevent service initialization loops ***
+// *** FIXED: Prevent service initialization loops with proper async waiting ***
 let servicesInitialized = false;
 let unifiedAIServiceInstance = null;
 
 // Initialize services ONCE with singleton pattern
 async function initializeServicesOnce() {
-  if (servicesInitialized) {
+  if (servicesInitialized && unifiedAIServiceInstance) {
     return { mcpService: mcpServiceInstance, aiService: unifiedAIServiceInstance };
   }
 
@@ -95,7 +95,25 @@ async function initializeServicesOnce() {
     const UnifiedAIService = require('./services/ai/UnifiedAIService');
     if (!unifiedAIServiceInstance) {
       unifiedAIServiceInstance = new UnifiedAIService();
-      console.log('AI service initialized once');
+      
+      // CRITICAL FIX: Wait for initialization to complete
+      console.log('⏳ Waiting for AI service initialization...');
+      
+      // Give the service time to initialize (it loads prompts from Firebase)
+      let initAttempts = 0;
+      const maxAttempts = 30; // 30 seconds max
+      
+      while (!unifiedAIServiceInstance.initialized && initAttempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+        initAttempts++;
+        console.log(`⏳ AI service initialization attempt ${initAttempts}/${maxAttempts}`);
+      }
+      
+      if (unifiedAIServiceInstance.initialized) {
+        console.log('✅ AI service initialized successfully');
+      } else {
+        console.warn('⚠️ AI service initialization timeout, but continuing...');
+      }
     }
 
     servicesInitialized = true;
@@ -279,7 +297,7 @@ app.post('/api/nuclear-test', async (req, res) => {
   }
 });
 
-// *** NEW: Direct OpenAI Image Generation Endpoint (IMMEDIATE FIX) ***
+// *** NEW: Direct OpenAI Image Generation Endpoint (FIXED WITH PROPER INITIALIZATION) ***
 app.post('/api/ai/generate-image', async (req, res) => {
   try {
     console.log('🎨 Direct OpenAI image generation requested');
@@ -292,13 +310,23 @@ app.post('/api/ai/generate-image', async (req, res) => {
       });
     }
 
-    // Initialize services if not already done
+    // FIXED: Ensure services are initialized before proceeding
+    console.log('🔧 Ensuring AI services are initialized...');
     const { aiService } = await initializeServicesOnce();
     
-    if (!aiService || !aiService.initialized) {
+    if (!aiService) {
+      console.error('❌ AI service is null after initialization');
       return res.status(503).json({
         success: false,
-        error: 'AI Service not initialized'
+        error: 'AI Service failed to initialize'
+      });
+    }
+    
+    if (!aiService.initialized) {
+      console.error('❌ AI service not marked as initialized');
+      return res.status(503).json({
+        success: false,
+        error: 'AI Service not fully initialized'
       });
     }
 
@@ -309,8 +337,17 @@ app.post('/api/ai/generate-image', async (req, res) => {
     
     if (aiService.providers && aiService.providers.get) {
       openaiProvider = aiService.providers.get('openai');
+      console.log('🔍 Found OpenAI provider via providers.get()');
     } else if (aiService.openai) {
       openaiProvider = aiService.openai;
+      console.log('🔍 Found OpenAI provider via direct property');
+    } else {
+      console.error('❌ No OpenAI provider found in AI service');
+      console.log('Available providers:', Object.keys(aiService.providers || {}));
+      return res.status(503).json({
+        success: false,
+        error: 'OpenAI provider not available - check your OpenAI API key configuration'
+      });
     }
 
     if (!openaiProvider) {
@@ -379,7 +416,6 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
     if (mcpServiceInstance && mcpServiceInstance.isInitialized) {
       try {
         console.log('🔄 Attempting MCP image generation...');
-        // Delegate to MCP service if available
         const mcpResult = await mcpServiceInstance.generateProductImages(req.body);
         return res.json(mcpResult);
       } catch (mcpError) {
@@ -390,18 +426,30 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
     // Fallback: Direct OpenAI generation
     console.log('🎯 Using direct OpenAI fallback for product image generation');
     
+    // FIXED: Ensure services are initialized
     const { aiService } = await initializeServicesOnce();
     
-    if (!aiService || !aiService.initialized) {
+    if (!aiService) {
+      console.error('❌ AI service is null after initialization');
       return res.status(503).json({
         success: false,
-        error: 'AI Service not initialized'
+        error: 'AI Service failed to initialize for fallback'
+      });
+    }
+    
+    if (!aiService.initialized) {
+      console.error('❌ AI service not marked as initialized');
+      return res.status(503).json({
+        success: false,
+        error: 'AI Service not fully initialized for fallback'
       });
     }
 
     const openaiProvider = aiService.providers?.get?.('openai') || aiService.openai;
     
     if (!openaiProvider) {
+      console.error('❌ No OpenAI provider found');
+      console.log('Available providers:', Object.keys(aiService.providers || {}));
       return res.status(503).json({
         success: false,
         error: 'OpenAI provider not available'
