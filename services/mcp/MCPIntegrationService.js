@@ -125,7 +125,6 @@ class MCPIntegrationService extends EventEmitter {
       });
     });
   }
-  }
 
   async handleClientMessage(clientId, message) {
     const client = this.connectedClients.get(clientId);
