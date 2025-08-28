@@ -50,7 +50,13 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // CORS middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173', 
+    'https://www.higgsflow.com',
+    'https://higgsflow.com',
+    process.env.FRONTEND_URL
+  ].filter(Boolean), // Remove any undefined values
   credentials: true
 }));
 
