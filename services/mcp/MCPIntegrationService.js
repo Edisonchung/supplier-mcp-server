@@ -40,13 +40,52 @@ class MCPIntegrationService extends EventEmitter {
   }
 
   async setupWebSocketServer() {
-    const port = process.env.MCP_WS_PORT || 8080;
-    
-    this.wsServer = new WebSocket.Server({ 
-      port: port,
-      path: '/mcp'
-    });
+    const basePort = process.env.MCP_WS_PORT || 8080;
+    let port = basePort;
+    let attempts = 0;
+    const maxAttempts = 10;
 
+    while (attempts < maxAttempts) {
+      try {
+        await this.tryCreateWebSocketServer(port);
+        console.log(`🌐 MCP WebSocket server listening on port ${port}`);
+        break;
+      } catch (error) {
+        if (error.code === 'EADDRINUSE') {
+          attempts++;
+          port = parseInt(basePort) + attempts;
+          console.log(`⚠️  Port ${port - 1} in use, trying port ${port}...`);
+          
+          if (attempts >= maxAttempts) {
+            throw new Error(`Failed to find available port after ${maxAttempts} attempts. Last tried port: ${port}`);
+          }
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
+  async tryCreateWebSocketServer(port) {
+    return new Promise((resolve, reject) => {
+      const server = new WebSocket.Server({ 
+        port: port,
+        path: '/mcp'
+      });
+
+      server.on('error', (error) => {
+        reject(error);
+      });
+
+      server.on('listening', () => {
+        this.wsServer = server;
+        this.setupWebSocketHandlers();
+        resolve();
+      });
+    });
+  }
+
+  setupWebSocketHandlers() {
     this.wsServer.on('connection', (ws, req) => {
       const clientId = this.generateClientId();
       console.log(`🔗 MCP client connected: ${clientId}`);
@@ -85,8 +124,7 @@ class MCPIntegrationService extends EventEmitter {
         timestamp: new Date().toISOString()
       });
     });
-
-    console.log(`🌐 MCP WebSocket server listening on port ${port}`);
+  }
   }
 
   async handleClientMessage(clientId, message) {
@@ -776,7 +814,7 @@ class MCPIntegrationService extends EventEmitter {
       status: 'running',
       mcp_server: this.mcpServer.getServerInfo(),
       websocket_server: {
-        port: process.env.MCP_WS_PORT || 8080,
+        port: this.wsServer?.address()?.port || 'N/A',
         connected_clients: this.connectedClients.size,
         status: this.wsServer ? 'running' : 'stopped'
       },
