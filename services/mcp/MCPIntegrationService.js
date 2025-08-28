@@ -17,7 +17,7 @@ class MCPIntegrationService extends EventEmitter {
   }
 
   async initializeService() {
-    console.log('📄 Initializing MCP Integration Service...');
+    console.log('Initializing MCP Integration Service...');
     
     try {
       // Initialize WebSocket server for real-time MCP communication
@@ -27,34 +27,34 @@ class MCPIntegrationService extends EventEmitter {
       await this.setupAIIntegration();
       
       this.isInitialized = true;
-      console.log('✅ MCP Integration Service initialized successfully');
+      console.log('MCP Integration Service initialized successfully');
       
       this.emit('initialized', {
         timestamp: new Date().toISOString(),
         capabilities: this.getCapabilities()
       });
     } catch (error) {
-      console.error('❌ MCP Integration Service initialization failed:', error);
+      console.error('MCP Integration Service initialization failed:', error);
       throw error;
     }
   }
 
   async setupWebSocketServer() {
-    const basePort = process.env.MCP_WS_PORT || 8080;
-    let port = basePort;
+    const basePort = process.env.MCP_WS_PORT || 8081;
+    let port = parseInt(basePort);
     let attempts = 0;
     const maxAttempts = 10;
 
     while (attempts < maxAttempts) {
       try {
         await this.tryCreateWebSocketServer(port);
-        console.log(`🌐 MCP WebSocket server listening on port ${port}`);
+        console.log(`MCP WebSocket server listening on port ${port}`);
         break;
       } catch (error) {
         if (error.code === 'EADDRINUSE') {
           attempts++;
           port = parseInt(basePort) + attempts;
-          console.log(`⚠️  Port ${port - 1} in use, trying port ${port}...`);
+          console.log(`Port ${port - 1} in use, trying port ${port}...`);
           
           if (attempts >= maxAttempts) {
             throw new Error(`Failed to find available port after ${maxAttempts} attempts. Last tried port: ${port}`);
@@ -88,7 +88,7 @@ class MCPIntegrationService extends EventEmitter {
   setupWebSocketHandlers() {
     this.wsServer.on('connection', (ws, req) => {
       const clientId = this.generateClientId();
-      console.log(`🔗 MCP client connected: ${clientId}`);
+      console.log(`MCP client connected: ${clientId}`);
       
       this.connectedClients.set(clientId, {
         ws,
@@ -103,7 +103,7 @@ class MCPIntegrationService extends EventEmitter {
           const message = JSON.parse(data.toString());
           await this.handleClientMessage(clientId, message);
         } catch (error) {
-          console.error('❌ Error handling client message:', error);
+          console.error('Error handling client message:', error);
           this.sendToClient(clientId, {
             type: 'error',
             error: error.message
@@ -112,7 +112,7 @@ class MCPIntegrationService extends EventEmitter {
       });
 
       ws.on('close', () => {
-        console.log(`🔌 MCP client disconnected: ${clientId}`);
+        console.log(`MCP client disconnected: ${clientId}`);
         this.connectedClients.delete(clientId);
       });
 
@@ -130,7 +130,7 @@ class MCPIntegrationService extends EventEmitter {
     const client = this.connectedClients.get(clientId);
     if (!client) return;
 
-    console.log(`📨 MCP message from ${clientId}:`, message.type);
+    console.log(`MCP message from ${clientId}:`, message.type);
 
     switch (message.type) {
       case 'authenticate':
@@ -189,9 +189,9 @@ class MCPIntegrationService extends EventEmitter {
     });
     
     if (isValid) {
-      console.log(`✅ Client ${clientId} authenticated successfully`);
+      console.log(`Client ${clientId} authenticated successfully`);
     } else {
-      console.log(`❌ Client ${clientId} authentication failed`);
+      console.log(`Client ${clientId} authentication failed`);
     }
   }
 
@@ -239,10 +239,10 @@ class MCPIntegrationService extends EventEmitter {
         }
       });
 
-      console.log(`✅ Tool ${message.toolName} executed for client ${clientId} in ${processingTime}ms`);
+      console.log(`Tool ${message.toolName} executed for client ${clientId} in ${processingTime}ms`);
       
     } catch (error) {
-      console.error(`❌ Tool execution error for client ${clientId}:`, error);
+      console.error(`Tool execution error for client ${clientId}:`, error);
       
       this.sendToClient(clientId, {
         type: 'tool_error',
@@ -266,7 +266,7 @@ class MCPIntegrationService extends EventEmitter {
     }
 
     try {
-      console.log(`🎨 Starting image generation for client ${clientId}: ${message.productId}`);
+      console.log(`Starting image generation for client ${clientId}: ${message.productId}`);
       
       // Send processing started notification
       this.sendToClient(clientId, {
@@ -304,10 +304,10 @@ class MCPIntegrationService extends EventEmitter {
         timestamp: new Date().toISOString()
       });
 
-      console.log(`✅ Image generated for product ${message.productId} for client ${clientId}`);
+      console.log(`Image generated for product ${message.productId} for client ${clientId}`);
       
     } catch (error) {
-      console.error(`❌ Image generation error for client ${clientId}:`, error);
+      console.error(`Image generation error for client ${clientId}:`, error);
       
       this.sendToClient(clientId, {
         type: 'image_generation_error',
@@ -331,7 +331,7 @@ class MCPIntegrationService extends EventEmitter {
     }
 
     try {
-      console.log(`🎨 Starting batch image generation for client ${clientId}: ${message.products.length} products`);
+      console.log(`Starting batch image generation for client ${clientId}: ${message.products.length} products`);
       
       const total = message.products.length;
       let completed = 0;
@@ -379,7 +379,7 @@ class MCPIntegrationService extends EventEmitter {
           completed++;
           
         } catch (productError) {
-          console.error(`❌ Failed to generate image for product ${product.productId}:`, productError);
+          console.error(`Failed to generate image for product ${product.productId}:`, productError);
           
           results.push({
             productId: product.productId,
@@ -407,10 +407,10 @@ class MCPIntegrationService extends EventEmitter {
         timestamp: new Date().toISOString()
       });
 
-      console.log(`✅ Batch image generation completed for client ${clientId}: ${results.filter(r => r.success).length}/${total} successful`);
+      console.log(`Batch image generation completed for client ${clientId}: ${results.filter(r => r.success).length}/${total} successful`);
       
     } catch (error) {
-      console.error(`❌ Batch image generation error for client ${clientId}:`, error);
+      console.error(`Batch image generation error for client ${clientId}:`, error);
       
       this.sendToClient(clientId, {
         type: 'batch_image_generation_error',
@@ -445,7 +445,7 @@ class MCPIntegrationService extends EventEmitter {
       timestamp: new Date().toISOString()
     });
     
-    console.log(`📡 Client ${clientId} subscribed to ${message.eventType}`);
+    console.log(`Client ${clientId} subscribed to ${message.eventType}`);
   }
 
   async handleStreamedProcess(clientId, message) {
@@ -460,7 +460,7 @@ class MCPIntegrationService extends EventEmitter {
     }
 
     try {
-      console.log(`🔄 Starting streamed process for client ${clientId}: ${message.processType}`);
+      console.log(`Starting streamed process for client ${clientId}: ${message.processType}`);
       
       // Real streaming processing for document analysis
       if (message.processType === 'document_analysis' && message.content) {
@@ -566,7 +566,7 @@ class MCPIntegrationService extends EventEmitter {
       timestamp: new Date().toISOString()
     });
 
-    // Step 4: Generate product image (NEW)
+    // Step 4: Generate product image
     if (extractResult.result.items && extractResult.result.items.length > 0) {
       this.sendToClient(clientId, {
         type: 'stream_update',
@@ -732,7 +732,7 @@ class MCPIntegrationService extends EventEmitter {
   }
 
   async setupAIIntegration() {
-    console.log('🤖 Setting up AI service integration...');
+    console.log('Setting up AI service integration...');
     
     // Listen for AI service events and broadcast to subscribed clients
     this.aiService.on('extraction_complete', (data) => {
@@ -743,7 +743,7 @@ class MCPIntegrationService extends EventEmitter {
       this.broadcastToSubscribers('analysis_complete', data);
     });
 
-    // NEW: Image generation events
+    // Image generation events
     this.aiService.on('image_generation_complete', (data) => {
       this.broadcastToSubscribers('image_generation_complete', data);
     });
@@ -752,7 +752,7 @@ class MCPIntegrationService extends EventEmitter {
       this.broadcastToSubscribers('batch_image_generation_progress', data);
     });
     
-    console.log('✅ AI service integration configured');
+    console.log('AI service integration configured');
   }
 
   generateClientId() {
@@ -825,7 +825,7 @@ class MCPIntegrationService extends EventEmitter {
   }
 
   async shutdown() {
-    console.log('🛑 Shutting down MCP Integration Service...');
+    console.log('Shutting down MCP Integration Service...');
     
     try {
       // Close all client connections
@@ -841,9 +841,9 @@ class MCPIntegrationService extends EventEmitter {
       // Stop MCP server
       await this.mcpServer.stop();
       
-      console.log('✅ MCP Integration Service shut down successfully');
+      console.log('MCP Integration Service shut down successfully');
     } catch (error) {
-      console.error('❌ Error during MCP service shutdown:', error);
+      console.error('Error during MCP service shutdown:', error);
     }
   }
 }
