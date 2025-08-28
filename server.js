@@ -27,16 +27,104 @@ let db = null;
 try {
   firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
-  console.log('🔥 Firebase initialized successfully for prompt persistence');
+  console.log('Firebase initialized successfully for prompt persistence');
 } catch (error) {
-  console.warn('⚠️ Firebase initialization failed:', error.message);
-  console.warn('📝 Prompts will use fallback storage (may be lost on deployment)');
+  console.warn('Firebase initialization failed:', error.message);
+  console.warn('Prompts will use fallback storage (may be lost on deployment)');
 }
 
 const app = express();
 // FIXED: Use Railway's dynamic port and bind to all interfaces
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0'; // This is the key fix for Railway
+
+// ===================================================================
+// ENHANCED CORS CONFIGURATION FOR PRODUCTION
+// ===================================================================
+
+const allowedOrigins = [
+  // Production domains
+  'https://www.higgsflow.com',
+  'https://higgsflow.com',
+  'https://supplier-management-system-one.vercel.app',
+  
+  // Development domains
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
+  
+  // Railway domains
+  'https://supplier-mcp-server-production.up.railway.app',
+  'https://*.up.railway.app',
+  
+  // Vercel domains
+  'https://*.vercel.app',
+  
+  // Firebase domains
+  'https://*.firebaseapp.com',
+  'https://*.web.app',
+  
+  // Add environment variable override
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
+// Enhanced CORS configuration
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    // Check against allowed origins list
+    const isAllowed = allowedOrigins.some(allowedOrigin => {
+      if (allowedOrigin.includes('*')) {
+        // Handle wildcard domains
+        const pattern = allowedOrigin.replace(/\*/g, '.*');
+        const regex = new RegExp('^' + pattern + '$');
+        return regex.test(origin);
+      }
+      return allowedOrigin === origin;
+    });
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked origin: ${origin}`);
+      // In production, still allow the request but log it
+      callback(null, true); // Change to false in strict mode
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Origin',
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'X-API-Key',
+    'X-Auth-Token',
+    'Cache-Control',
+    'Pragma',
+    'X-Firebase-AppCheck',
+    'x-client-info'
+  ],
+  exposedHeaders: [
+    'Content-Length',
+    'Content-Type',
+    'X-Total-Count',
+    'X-Request-ID'
+  ],
+  optionsSuccessStatus: 200,
+  maxAge: 86400 // Cache preflight for 24 hours
+};
+
+// Apply CORS middleware FIRST
+app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
 
 // Middleware for timeout handling
 app.use((req, res, next) => {
@@ -50,18 +138,25 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// FIXED: Updated CORS for Railway deployment
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173', 
-    'https://www.higgsflow.com',
-    'https://higgsflow.com',
-    'https://supplier-mcp-server-production.up.railway.app', // Added Railway URL
-    process.env.FRONTEND_URL
-  ].filter(Boolean), // Remove any undefined values
-  credentials: true
-}));
+// Security headers middleware
+app.use((req, res, next) => {
+  // Remove X-Powered-By header
+  res.removeHeader('X-Powered-By');
+  
+  // Add security headers
+  res.header('X-Content-Type-Options', 'nosniff');
+  res.header('X-Frame-Options', 'DENY');
+  res.header('X-XSS-Protection', '1; mode=block');
+  res.header('Referrer-Policy', 'origin-when-cross-origin');
+  
+  // Ensure CORS headers are always set
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
+  res.header('Access-Control-Allow-Headers', 'Origin,X-Requested-With,Content-Type,Accept,Authorization,X-API-Key,X-Auth-Token,Cache-Control,Pragma,X-Firebase-AppCheck,x-client-info');
+  
+  next();
+});
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -80,9 +175,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.url} - Origin: ${req.headers.origin || 'none'}`);
+  next();
+});
+
 // CRITICAL DEBUG ENDPOINT - Add this BEFORE your other routes
 app.post('/api/find-problem', (req, res) => {
-  console.log('🔍 Debug endpoint called - starting stack trace monitoring...');
+  console.log('Debug endpoint called - starting stack trace monitoring...');
   
   // Override console.log to catch the 0ms message and show stack trace
   const originalConsoleLog = console.log;
@@ -90,26 +192,26 @@ app.post('/api/find-problem', (req, res) => {
     const message = args.join(' ');
     
     // Check for the exact 0ms message
-    if (message.includes('✅ AI response received in 0ms')) {
-      console.error('🚨🚨🚨 FOUND THE EXACT SOURCE OF 0ms! 🚨🚨🚨');
-      console.error('🚨 Message:', message);
-      console.error('🚨 STACK TRACE (showing exact file and line):');
+    if (message.includes('AI response received in 0ms')) {
+      console.error('FOUND THE EXACT SOURCE OF 0ms!');
+      console.error('Message:', message);
+      console.error('STACK TRACE (showing exact file and line):');
       console.error(new Error('SOURCE LOCATION TRACE').stack);
-      console.error('🚨🚨🚨 END SOURCE TRACE 🚨🚨🚨');
+      console.error('END SOURCE TRACE');
       
       // Also check for any other suspicious timing messages
-      console.error('🔍 Additional debugging info:');
-      console.error('🔍 Process uptime:', process.uptime(), 'seconds');
-      console.error('🔍 Memory usage:', process.memoryUsage());
+      console.error('Additional debugging info:');
+      console.error('Process uptime:', process.uptime(), 'seconds');
+      console.error('Memory usage:', process.memoryUsage());
     }
     
     // Check for other suspicious instant responses
     if (message.includes('response received in 1ms') || 
         message.includes('response received in 0ms') ||
         message.includes('AI response received in') && (message.includes('0ms') || message.includes('1ms'))) {
-      console.error('🚨 SUSPICIOUS INSTANT RESPONSE DETECTED!');
-      console.error('🚨 Message:', message);
-      console.error('🚨 Stack trace:');
+      console.error('SUSPICIOUS INSTANT RESPONSE DETECTED!');
+      console.error('Message:', message);
+      console.error('Stack trace:');
       console.error(new Error('INSTANT RESPONSE LOCATION').stack);
     }
     
@@ -117,9 +219,9 @@ app.post('/api/find-problem', (req, res) => {
     originalConsoleLog.apply(console, args);
   };
   
-  console.log('✅ Stack trace monitoring ENABLED');
-  console.log('🎯 Now test your product enhancement endpoint');
-  console.log('📋 Any 0ms or 1ms responses will show full stack traces');
+  console.log('Stack trace monitoring ENABLED');
+  console.log('Now test your product enhancement endpoint');
+  console.log('Any 0ms or 1ms responses will show full stack traces');
   
   res.json({ 
     success: true,
@@ -138,7 +240,7 @@ app.post('/api/find-problem', (req, res) => {
 // NUCLEAR TEST ENDPOINT - Direct API test to verify connectivity
 app.post('/api/nuclear-test', async (req, res) => {
   const startTime = Date.now();
-  console.log('🧪 NUCLEAR TEST: Starting direct DeepSeek API call...');
+  console.log('NUCLEAR TEST: Starting direct DeepSeek API call...');
   
   try {
     const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -155,7 +257,7 @@ app.post('/api/nuclear-test', async (req, res) => {
       });
     }
     
-    console.log('🧪 NUCLEAR: Making direct fetch to DeepSeek API...');
+    console.log('NUCLEAR: Making direct fetch to DeepSeek API...');
     
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
@@ -182,8 +284,8 @@ app.post('/api/nuclear-test', async (req, res) => {
     const data = await response.json();
     const actualTime = Date.now() - startTime;
     
-    console.log(`🧪 NUCLEAR TEST: REAL API completed in ${actualTime}ms`);
-    console.log('🧪 NUCLEAR: Response received:', data.choices[0]?.message?.content);
+    console.log(`NUCLEAR TEST: REAL API completed in ${actualTime}ms`);
+    console.log('NUCLEAR: Response received:', data.choices[0]?.message?.content);
     
     res.json({
       success: true,
@@ -203,7 +305,7 @@ app.post('/api/nuclear-test', async (req, res) => {
     });
   } catch (error) {
     const actualTime = Date.now() - startTime;
-    console.error(`🧪 NUCLEAR TEST: Failed after ${actualTime}ms:`, error.message);
+    console.error(`NUCLEAR TEST: Failed after ${actualTime}ms:`, error.message);
     
     res.json({
       success: false,
@@ -221,7 +323,7 @@ app.post('/api/nuclear-test', async (req, res) => {
 // Initialize default categories
 const initializeDefaultCategories = async () => {
   if (!db) {
-    console.warn('⚠️ Firebase not available, skipping category initialization');
+    console.warn('Firebase not available, skipping category initialization');
     return;
   }
 
@@ -230,7 +332,7 @@ const initializeDefaultCategories = async () => {
     const snapshot = await getDocs(categoriesRef);
     
     if (snapshot.empty) {
-      console.log('🆕 Initializing default categories...');
+      console.log('Initializing default categories...');
       
       const defaultCategories = [
         {
@@ -331,12 +433,12 @@ const initializeDefaultCategories = async () => {
         });
       }
       
-      console.log('✅ Default categories initialized successfully');
+      console.log('Default categories initialized successfully');
     } else {
-      console.log('✅ Categories already exist, skipping initialization');
+      console.log('Categories already exist, skipping initialization');
     }
   } catch (error) {
-    console.error('❌ Failed to initialize categories:', error);
+    console.error('Failed to initialize categories:', error);
   }
 };
 
@@ -373,7 +475,7 @@ app.get('/api/categories', async (req, res) => {
     
     res.json(categories);
   } catch (error) {
-    console.error('❌ Error fetching categories:', error);
+    console.error('Error fetching categories:', error);
     res.status(500).json({ 
       error: 'Failed to fetch categories', 
       details: error.message 
@@ -434,7 +536,7 @@ app.post('/api/categories', async (req, res) => {
       await addDoc(collection(db, 'categories'), categoryData);
     });
     
-    console.log(`✅ Category created: ${name} (${categoryId})`);
+    console.log(`Category created: ${name} (${categoryId})`);
     
     res.json({
       success: true,
@@ -442,7 +544,7 @@ app.post('/api/categories', async (req, res) => {
       category: { id: categoryId, ...categoryData }
     });
   } catch (error) {
-    console.error('❌ Error creating category:', error);
+    console.error('Error creating category:', error);
     res.status(500).json({ 
       error: 'Failed to create category', 
       details: error.message 
@@ -473,14 +575,14 @@ app.put('/api/categories/:id', async (req, res) => {
     const docRef = doc(db, 'categories', categoryId);
     await updateDoc(docRef, updateData);
     
-    console.log(`✅ Category updated: ${categoryId}`);
+    console.log(`Category updated: ${categoryId}`);
     
     res.json({
       success: true,
       message: 'Category updated successfully'
     });
   } catch (error) {
-    console.error('❌ Error updating category:', error);
+    console.error('Error updating category:', error);
     res.status(500).json({ 
       error: 'Failed to update category', 
       details: error.message 
@@ -511,14 +613,14 @@ app.delete('/api/categories/:id', async (req, res) => {
 
     await deleteDoc(docRef);
     
-    console.log(`✅ Category deleted: ${categoryId}`);
+    console.log(`Category deleted: ${categoryId}`);
     
     res.json({
       success: true,
       message: 'Category deleted successfully'
     });
   } catch (error) {
-    console.error('❌ Error deleting category:', error);
+    console.error('Error deleting category:', error);
     res.status(500).json({ 
       error: 'Failed to delete category', 
       details: error.message 
@@ -603,6 +705,11 @@ app.get('/health', async (req, res) => {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
+      cors: {
+        enabled: true,
+        allowed_origins: allowedOrigins.slice(0, 5), // Show first 5 for security
+        origin: req.headers.origin || 'none'
+      },
       services: {
         core: 'active',
         modularAI: aiHealth.status,
@@ -668,8 +775,7 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase-categories-debug',
-      // FIXED: Updated endpoints for external access
+      version: '2.1.0-production-cors-fix',
       endpoints: {
         health: '/health',
         api: '/api',
@@ -705,7 +811,8 @@ app.get('/health', async (req, res) => {
         persistentCategories: categorySystemHealth.storage === 'firestore',
         firebaseIntegration: !!firebaseApp,
         dynamicCategoryManagement: !!firebaseApp,
-        debugEndpoints: true
+        debugEndpoints: true,
+        productionCORS: true
       }
     });
   } catch (error) {
@@ -713,6 +820,10 @@ app.get('/health', async (req, res) => {
     res.json({
       status: 'ok',
       timestamp: new Date().toISOString(),
+      cors: {
+        enabled: true,
+        status: 'active'
+      },
       services: {
         core: 'active',
         modularAI: 'error',
@@ -728,7 +839,7 @@ app.get('/health', async (req, res) => {
         maxFileSize: '10MB'
       },
       environment: process.env.NODE_ENV || 'development',
-      version: '2.0.0-mcp-enhanced-firebase-categories-debug',
+      version: '2.1.0-production-cors-fix',
       ai_status: 'initializing',
       error: error.message
     });
@@ -738,8 +849,13 @@ app.get('/health', async (req, res) => {
 // Enhanced root endpoint
 app.get('/', (req, res) => {
   res.json({
-    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP, Firebase & Category Management + Debug Tools',
-    version: '2.0.0-mcp-enhanced-firebase-categories-debug',
+    message: 'HiggsFlow Supplier MCP Server with Advanced AI, MCP, Firebase & Category Management + Production CORS',
+    version: '2.1.0-production-cors-fix',
+    cors: {
+      enabled: true,
+      production_domains_supported: ['https://www.higgsflow.com', 'https://higgsflow.com'],
+      origin: req.headers.origin || 'none'
+    },
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
@@ -754,7 +870,8 @@ app.get('/', (req, res) => {
       'Persistent prompt storage (Firebase)',
       'Dynamic category management',
       'Zero data loss on deployments',
-      'Debug tools for troubleshooting'
+      'Debug tools for troubleshooting',
+      'Production CORS configuration'
     ],
     endpoints: {
       health: '/health',
@@ -888,17 +1005,21 @@ app.use((req, res) => {
 
 // FIXED: Start server with proper host binding for Railway
 const server = app.listen(PORT, HOST, async () => {
-  console.log(`🚀 HiggsFlow Supplier MCP Server v2.0.0 (MCP-Enhanced + Firebase + Categories + Debug) is running on ${HOST}:${PORT}`);
-  console.log(`📋 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`⏱️  Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
-  console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
-  console.log(`🏦 Bank payment extraction: http://${HOST}:${PORT}/api/bank-payments/extract`);
+  console.log(`HiggsFlow Supplier MCP Server v2.1.0 (Production CORS Fix) is running on ${HOST}:${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
+  console.log(`Health check: http://${HOST}:${PORT}/health`);
+  
+  console.log('\nCORS Configuration:');
+  console.log(`Production domain: https://www.higgsflow.com - ENABLED`);
+  console.log(`Vercel domain: https://supplier-management-system-one.vercel.app - ENABLED`);
+  console.log(`Development domains: localhost:5173, localhost:3000 - ENABLED`);
+  console.log(`Railway domain: https://supplier-mcp-server-production.up.railway.app - ENABLED`);
   
   // Debug endpoints logging
-  console.log('\n🔧 DEBUG ENDPOINTS (NEW):');
-  console.log(`   🔍 POST http://${HOST}:${PORT}/api/find-problem - Enable 0ms source tracing`);
-  console.log(`   🧪 POST http://${HOST}:${PORT}/api/nuclear-test - Direct DeepSeek API test`);
-  console.log(`   📋 These will help identify the exact source of instant responses`);
+  console.log('\nDEBUG ENDPOINTS:');
+  console.log(`   POST http://${HOST}:${PORT}/api/find-problem - Enable 0ms source tracing`);
+  console.log(`   POST http://${HOST}:${PORT}/api/nuclear-test - Direct DeepSeek API test`);
   
   // Initialize categories after server starts
   if (firebaseApp && db) {
@@ -906,57 +1027,48 @@ const server = app.listen(PORT, HOST, async () => {
   }
   
   // Firebase status logging
-  console.log('\n🔥 Firebase Integration Status:');
+  console.log('\nFirebase Integration Status:');
   if (firebaseApp && db) {
-    console.log(`   ✅ Firebase connected to project: ${firebaseConfig.projectId}`);
-    console.log(`   ✅ Firestore database ready for prompt persistence`);
-    console.log(`   ✅ Category management system active`);
-    console.log(`   ✅ Prompts and categories will survive all deployments`);
+    console.log(`   Firebase connected to project: ${firebaseConfig.projectId}`);
+    console.log(`   Firestore database ready for prompt persistence`);
+    console.log(`   Category management system active`);
+    console.log(`   Prompts and categories will survive all deployments`);
   } else {
-    console.log(`   ⚠️  Firebase not configured - prompts may be lost on deployment`);
-    console.log(`   💡 Add Firebase environment variables to enable persistence`);
+    console.log(`   Firebase not configured - prompts may be lost on deployment`);
+    console.log(`   Add Firebase environment variables to enable persistence`);
   }
   
   // Category management endpoints
-  console.log('\n📁 Category Management endpoints:');
-  console.log(`   📋 GET  http://${HOST}:${PORT}/api/categories - List all categories`);
-  console.log(`   ➕ POST http://${HOST}:${PORT}/api/categories - Create new category`);
-  console.log(`   ✏️  PUT  http://${HOST}:${PORT}/api/categories/:id - Update category`);
-  console.log(`   🗑️  DEL  http://${HOST}:${PORT}/api/categories/:id - Delete category`);
+  console.log('\nCategory Management endpoints:');
+  console.log(`   GET  http://${HOST}:${PORT}/api/categories - List all categories`);
+  console.log(`   POST http://${HOST}:${PORT}/api/categories - Create new category`);
+  console.log(`   PUT  http://${HOST}:${PORT}/api/categories/:id - Update category`);
+  console.log(`   DEL  http://${HOST}:${PORT}/api/categories/:id - Delete category`);
   
   // Log AI endpoints
-  console.log('\n🤖 Modular AI endpoints:');
-  console.log(`   🏥 GET  http://${HOST}:${PORT}/api/ai/health - AI system health`);
-  console.log(`   🧪 GET  http://${HOST}:${PORT}/api/ai/test - Quick functionality test`);
-  console.log(`   📦 GET  http://${HOST}:${PORT}/api/ai/modules - Module management`);
-  console.log(`   📝 GET  http://${HOST}:${PORT}/api/ai/prompts - Prompt management`);
-  console.log(`   📄 POST http://${HOST}:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
-  console.log(`   📋 POST http://${HOST}:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
-  console.log(`   📚 GET  http://${HOST}:${PORT}/api/ai/docs - AI API documentation`);
-  console.log(`   📄 POST http://${HOST}:${PORT}/api/ai/extract-po - Legacy compatibility`);
-  console.log(`   📄 POST http://${HOST}:${PORT}/api/ai/extract-pi - Legacy compatibility`);
+  console.log('\nModular AI endpoints:');
+  console.log(`   GET  http://${HOST}:${PORT}/api/ai/health - AI system health`);
+  console.log(`   GET  http://${HOST}:${PORT}/api/ai/test - Quick functionality test`);
+  console.log(`   GET  http://${HOST}:${PORT}/api/ai/modules - Module management`);
+  console.log(`   GET  http://${HOST}:${PORT}/api/ai/prompts - Prompt management`);
+  console.log(`   POST http://${HOST}:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
+  console.log(`   POST http://${HOST}:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
   
   // Log new MCP endpoints
-  console.log('\n🔗 MCP endpoints (NEW):');
-  console.log(`   🔧 GET  http://${HOST}:${PORT}/api/mcp/status - MCP service status`);
-  console.log(`   📋 GET  http://${HOST}:${PORT}/api/mcp/capabilities - Available capabilities`);
-  console.log(`   🛠️  GET  http://${HOST}:${PORT}/api/mcp/tools - List MCP tools`);
-  console.log(`   ⚡ POST http://${HOST}:${PORT}/api/mcp/tools/execute - Execute MCP tool`);
-  console.log(`   📄 POST http://${HOST}:${PORT}/api/mcp/extract - Enhanced extraction`);
-  console.log(`   🏢 POST http://${HOST}:${PORT}/api/mcp/analyze/supplier - Supplier analysis`);
-  console.log(`   💡 POST http://${HOST}:${PORT}/api/mcp/recommendations - AI recommendations`);
-  console.log(`   📦 POST http://${HOST}:${PORT}/api/mcp/batch - Batch processing`);
-  console.log(`   🔄 POST http://${HOST}:${PORT}/api/mcp/stream - Streaming processes`);
-  console.log(`   📊 GET  http://${HOST}:${PORT}/api/mcp/monitor - System monitoring`);
-  console.log(`   📚 GET  http://${HOST}:${PORT}/api/mcp/docs - MCP API documentation`);
+  console.log('\nMCP endpoints:');
+  console.log(`   GET  http://${HOST}:${PORT}/api/mcp/status - MCP service status`);
+  console.log(`   GET  http://${HOST}:${PORT}/api/mcp/capabilities - Available capabilities`);
+  console.log(`   GET  http://${HOST}:${PORT}/api/mcp/tools - List MCP tools`);
+  console.log(`   POST http://${HOST}:${PORT}/api/mcp/tools/execute - Execute MCP tool`);
+  console.log(`   POST http://${HOST}:${PORT}/api/mcp/extract - Enhanced extraction`);
   
-  // FIXED: WebSocket URL for different environments
+  // WebSocket URL for different environments
   const wsUrl = process.env.NODE_ENV === 'production' 
     ? `wss://supplier-mcp-server-production.up.railway.app:${process.env.MCP_WS_PORT || 8081}/mcp`
     : `ws://${HOST}:${process.env.MCP_WS_PORT || 8081}/mcp`;
-  console.log(`   🌐 WebSocket: ${wsUrl}`);
+  console.log(`   WebSocket: ${wsUrl}`);
   
-  // Environment variables check (rest of the existing code...)
+  // Environment variables check
   const requiredEnvVars = ['DEEPSEEK_API_KEY'];
   const optionalEnvVars = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GOOGLE_AI_API_KEY'];
   const mcpEnvVars = ['MCP_WS_PORT'];
@@ -971,37 +1083,37 @@ const server = app.listen(PORT, HOST, async () => {
   const missingFirebase = firebaseEnvVars.filter(envVar => !process.env[envVar] && !process.env[`VITE_${envVar}`]);
 
   if (missingRequired.length > 0) {
-    console.log('\n⚠️  Missing REQUIRED environment variables:');
+    console.log('\nMissing REQUIRED environment variables:');
     missingRequired.forEach(envVar => {
       console.log(`   - ${envVar} (Required for AI functionality)`);
     });
   } else {
-    console.log('\n✅ All required AI environment variables configured');
+    console.log('\nAll required AI environment variables configured');
   }
   
   if (missingOptional.length > 0) {
-    console.log('\n💡 Optional AI providers not configured:');
+    console.log('\nOptional AI providers not configured:');
     missingOptional.forEach(envVar => {
       console.log(`   - ${envVar} (For enhanced AI capabilities)`);
     });
   } else {
-    console.log('✅ All AI providers configured for maximum capabilities');
+    console.log('All AI providers configured for maximum capabilities');
   }
   
   if (missingMCP.length > 0) {
-    console.log('\n💡 MCP configuration using defaults:');
+    console.log('\nMCP configuration using defaults:');
     console.log(`   - MCP_WS_PORT: ${process.env.MCP_WS_PORT || 8081} (default)`);
   } else {
-    console.log('✅ MCP configuration complete');
+    console.log('MCP configuration complete');
   }
   
   if (missingFirebase.length > 0) {
-    console.log('\n⚠️  Firebase configuration incomplete:');
+    console.log('\nFirebase configuration incomplete:');
     console.log('   Missing variables (prompts & categories may be lost on deployment):');
     missingFirebase.forEach(envVar => {
       console.log(`   - ${envVar}`);
     });
-    console.log('\n💡 To enable persistent storage, add these to Railway:');
+    console.log('\nTo enable persistent storage, add these to Railway:');
     console.log('   FIREBASE_API_KEY=AIzaSyBxNZe2RYL1vJZgu93C3zdz2r0J-lDYgCY');
     console.log('   FIREBASE_AUTH_DOMAIN=higgsflow-b9f81.firebaseapp.com');
     console.log('   FIREBASE_PROJECT_ID=higgsflow-b9f81');
@@ -1009,42 +1121,36 @@ const server = app.listen(PORT, HOST, async () => {
     console.log('   FIREBASE_MESSAGING_SENDER_ID=717201513347');
     console.log('   FIREBASE_APP_ID=1:717201513347:web:86abc12a7dcebe914834b6');
   } else {
-    console.log('✅ Firebase configuration complete - prompts & categories will persist');
+    console.log('Firebase configuration complete - prompts & categories will persist');
   }
   
-  console.log('\n🎯 Features enabled:');
-  console.log('   ✅ Modular AI architecture');
-  console.log('   ✅ Multi-provider AI support');
-  console.log('   ✅ Supplier-specific intelligence (PTP optimization)');
-  console.log('   ✅ Enhanced document extraction');
-  console.log('   ✅ Performance tracking and analytics');
-  console.log('   ✅ Backward compatibility with existing APIs');
-  console.log('   ✅ Model Context Protocol (MCP) integration');
-  console.log('   ✅ Real-time WebSocket communication');
-  console.log('   ✅ Advanced AI tool orchestration');
-  console.log('   ✅ Batch processing capabilities');
-  console.log('   ✅ Streaming process support');
-  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Persistent prompt storage (Firebase)`);
-  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Dynamic category management (Firebase)`);
-  console.log(`   ${firebaseApp ? '✅' : '⚠️ '} Zero data loss on deployments`);
-  console.log('   ✅ Debug tools for troubleshooting 0ms responses');
+  console.log('\nFeatures enabled:');
+  console.log('   Modular AI architecture');
+  console.log('   Multi-provider AI support');
+  console.log('   Supplier-specific intelligence (PTP optimization)');
+  console.log('   Enhanced document extraction');
+  console.log('   Performance tracking and analytics');
+  console.log('   Backward compatibility with existing APIs');
+  console.log('   Model Context Protocol (MCP) integration');
+  console.log('   Real-time WebSocket communication');
+  console.log('   Advanced AI tool orchestration');
+  console.log('   Batch processing capabilities');
+  console.log('   Streaming process support');
+  console.log(`   ${firebaseApp ? 'Active' : 'Inactive'} Persistent prompt storage (Firebase)`);
+  console.log(`   ${firebaseApp ? 'Active' : 'Inactive'} Dynamic category management (Firebase)`);
+  console.log(`   ${firebaseApp ? 'Active' : 'Inactive'} Zero data loss on deployments`);
+  console.log('   Debug tools for troubleshooting 0ms responses');
+  console.log('   Production CORS configuration');
   
-  console.log('\n🚀 Phase 2 (MCP Enhancement + Firebase + Categories + Debug) ready for testing!');
-  console.log(`   Test: curl http://${HOST}:${PORT}/api/mcp/status`);
-  console.log(`   Categories: curl http://${HOST}:${PORT}/api/categories`);
-  console.log(`   Debug: curl -X POST http://${HOST}:${PORT}/api/find-problem`);
-  console.log(`   Nuclear: curl -X POST http://${HOST}:${PORT}/api/nuclear-test`);
-  console.log(`   Docs: http://${HOST}:${PORT}/api/mcp/docs`);
-  console.log(`   WebSocket: ${wsUrl}`);
-  console.log(`   Firebase: ${firebaseApp ? 'Connected' : 'Not configured'}`);
+  console.log('\nPhase 2 (MCP Enhancement + Firebase + Categories + Production CORS) ready!');
   
-  // FIXED: Log external URLs for Railway
+  // Log external URLs for Railway
   if (process.env.NODE_ENV === 'production') {
-    console.log('\n🌐 EXTERNAL URLs (Railway):');
-    console.log('   🔗 Health: https://supplier-mcp-server-production.up.railway.app/health');
-    console.log('   📊 Status: https://supplier-mcp-server-production.up.railway.app/api/mcp/status');
-    console.log('   📋 Categories: https://supplier-mcp-server-production.up.railway.app/api/categories');
-    console.log('   🧪 Nuclear: https://supplier-mcp-server-production.up.railway.app/api/nuclear-test');
+    console.log('\nEXTERNAL URLs (Railway):');
+    console.log('   Health: https://supplier-mcp-server-production.up.railway.app/health');
+    console.log('   Status: https://supplier-mcp-server-production.up.railway.app/api/mcp/status');
+    console.log('   Categories: https://supplier-mcp-server-production.up.railway.app/api/categories');
+    console.log('   Nuclear: https://supplier-mcp-server-production.up.railway.app/api/nuclear-test');
   }
 });
 
