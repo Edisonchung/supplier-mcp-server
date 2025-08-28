@@ -17,7 +17,7 @@ class MCPIntegrationService extends EventEmitter {
   }
 
   async initializeService() {
-    console.log('🔄 Initializing MCP Integration Service...');
+    console.log('📄 Initializing MCP Integration Service...');
     
     try {
       // Initialize WebSocket server for real-time MCP communication
@@ -119,6 +119,14 @@ class MCPIntegrationService extends EventEmitter {
       case 'stream_process':
         await this.handleStreamedProcess(clientId, message);
         break;
+
+      case 'generate_product_image':
+        await this.handleImageGeneration(clientId, message);
+        break;
+
+      case 'batch_image_generation':
+        await this.handleBatchImageGeneration(clientId, message);
+        break;
         
       default:
         this.sendToClient(clientId, {
@@ -209,6 +217,173 @@ class MCPIntegrationService extends EventEmitter {
     }
   }
 
+  async handleImageGeneration(clientId, message) {
+    const client = this.connectedClients.get(clientId);
+    
+    if (!client.authenticated) {
+      this.sendToClient(clientId, {
+        type: 'error',
+        error: 'Authentication required'
+      });
+      return;
+    }
+
+    try {
+      console.log(`🎨 Starting image generation for client ${clientId}: ${message.productId}`);
+      
+      // Send processing started notification
+      this.sendToClient(clientId, {
+        type: 'image_generation_started',
+        productId: message.productId,
+        requestId: message.requestId,
+        timestamp: new Date().toISOString()
+      });
+
+      // Execute the image generation tool through MCP server
+      const tool = this.mcpServer.tools.get('generate_product_image');
+      if (!tool) {
+        throw new Error('Image generation tool not found');
+      }
+
+      const result = await tool.handler({
+        productId: message.productId,
+        productName: message.productName,
+        category: message.category,
+        specifications: message.specifications,
+        provider: message.provider || 'openai' // Default to OpenAI
+      });
+
+      // Send success response
+      this.sendToClient(clientId, {
+        type: 'image_generation_complete',
+        productId: message.productId,
+        requestId: message.requestId,
+        result: {
+          imageUrl: result.imageUrl,
+          prompt: result.prompt,
+          provider: result.provider,
+          metadata: result.metadata
+        },
+        timestamp: new Date().toISOString()
+      });
+
+      console.log(`✅ Image generated for product ${message.productId} for client ${clientId}`);
+      
+    } catch (error) {
+      console.error(`❌ Image generation error for client ${clientId}:`, error);
+      
+      this.sendToClient(clientId, {
+        type: 'image_generation_error',
+        productId: message.productId,
+        requestId: message.requestId,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  async handleBatchImageGeneration(clientId, message) {
+    const client = this.connectedClients.get(clientId);
+    
+    if (!client.authenticated) {
+      this.sendToClient(clientId, {
+        type: 'error',
+        error: 'Authentication required'
+      });
+      return;
+    }
+
+    try {
+      console.log(`🎨 Starting batch image generation for client ${clientId}: ${message.products.length} products`);
+      
+      const total = message.products.length;
+      let completed = 0;
+      const results = [];
+
+      // Send batch started notification
+      this.sendToClient(clientId, {
+        type: 'batch_image_generation_started',
+        batchId: message.batchId,
+        totalProducts: total,
+        timestamp: new Date().toISOString()
+      });
+
+      // Process each product
+      for (const product of message.products) {
+        try {
+          // Send progress update
+          this.sendToClient(clientId, {
+            type: 'batch_progress',
+            batchId: message.batchId,
+            currentProduct: product.productId,
+            progress: Math.round((completed / total) * 100),
+            completed: completed,
+            total: total,
+            timestamp: new Date().toISOString()
+          });
+
+          const tool = this.mcpServer.tools.get('generate_product_image');
+          const result = await tool.handler({
+            productId: product.productId,
+            productName: product.productName,
+            category: product.category,
+            specifications: product.specifications,
+            provider: message.provider || 'openai'
+          });
+
+          results.push({
+            productId: product.productId,
+            success: true,
+            imageUrl: result.imageUrl,
+            prompt: result.prompt,
+            metadata: result.metadata
+          });
+
+          completed++;
+          
+        } catch (productError) {
+          console.error(`❌ Failed to generate image for product ${product.productId}:`, productError);
+          
+          results.push({
+            productId: product.productId,
+            success: false,
+            error: productError.message
+          });
+          
+          completed++;
+        }
+
+        // Small delay between generations to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Send batch completion
+      this.sendToClient(clientId, {
+        type: 'batch_image_generation_complete',
+        batchId: message.batchId,
+        results: results,
+        summary: {
+          total: total,
+          successful: results.filter(r => r.success).length,
+          failed: results.filter(r => !r.success).length
+        },
+        timestamp: new Date().toISOString()
+      });
+
+      console.log(`✅ Batch image generation completed for client ${clientId}: ${results.filter(r => r.success).length}/${total} successful`);
+      
+    } catch (error) {
+      console.error(`❌ Batch image generation error for client ${clientId}:`, error);
+      
+      this.sendToClient(clientId, {
+        type: 'batch_image_generation_error',
+        batchId: message.batchId,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
   async handleSubscription(clientId, message) {
     const client = this.connectedClients.get(clientId);
     
@@ -275,7 +450,7 @@ class MCPIntegrationService extends EventEmitter {
       type: 'stream_update',
       processType: 'document_analysis',
       step: 1,
-      totalSteps: 4,
+      totalSteps: 5,
       status: 'processing',
       message: 'Analyzing document structure...',
       timestamp: new Date().toISOString()
@@ -291,7 +466,7 @@ class MCPIntegrationService extends EventEmitter {
       type: 'stream_update',
       processType: 'document_analysis',
       step: 1,
-      totalSteps: 4,
+      totalSteps: 5,
       status: 'completed',
       result: {
         document_type: classResult.document_type,
@@ -305,7 +480,7 @@ class MCPIntegrationService extends EventEmitter {
       type: 'stream_update',
       processType: 'document_analysis',
       step: 2,
-      totalSteps: 4,
+      totalSteps: 5,
       status: 'processing',
       message: 'Extracting structured data...',
       timestamp: new Date().toISOString()
@@ -322,7 +497,7 @@ class MCPIntegrationService extends EventEmitter {
       type: 'stream_update',
       processType: 'document_analysis',
       step: 2,
-      totalSteps: 4,
+      totalSteps: 5,
       status: 'completed',
       result: extractResult.result,
       timestamp: new Date().toISOString()
@@ -333,7 +508,7 @@ class MCPIntegrationService extends EventEmitter {
       type: 'stream_update',
       processType: 'document_analysis',
       step: 3,
-      totalSteps: 4,
+      totalSteps: 5,
       status: 'processing',
       message: 'Validating extraction quality...',
       timestamp: new Date().toISOString()
@@ -345,7 +520,7 @@ class MCPIntegrationService extends EventEmitter {
       type: 'stream_update',
       processType: 'document_analysis',
       step: 3,
-      totalSteps: 4,
+      totalSteps: 5,
       status: 'completed',
       result: {
         confidence: extractResult.metadata?.confidence || 0.85,
@@ -354,12 +529,65 @@ class MCPIntegrationService extends EventEmitter {
       timestamp: new Date().toISOString()
     });
 
-    // Step 4: Final processing
+    // Step 4: Generate product image (NEW)
+    if (extractResult.result.items && extractResult.result.items.length > 0) {
+      this.sendToClient(clientId, {
+        type: 'stream_update',
+        processType: 'document_analysis',
+        step: 4,
+        totalSteps: 5,
+        status: 'processing',
+        message: 'Generating product images...',
+        timestamp: new Date().toISOString()
+      });
+
+      try {
+        const imageTool = this.mcpServer.tools.get('generate_product_image');
+        const firstItem = extractResult.result.items[0];
+        
+        const imageResult = await imageTool.handler({
+          productId: firstItem.item_code || 'temp_product',
+          productName: firstItem.description,
+          category: extractResult.result.supplier || 'general',
+          specifications: firstItem.specifications || '',
+          provider: 'openai'
+        });
+
+        this.sendToClient(clientId, {
+          type: 'stream_update',
+          processType: 'document_analysis',
+          step: 4,
+          totalSteps: 5,
+          status: 'completed',
+          result: {
+            imageGenerated: true,
+            imageUrl: imageResult.imageUrl,
+            productName: firstItem.description
+          },
+          timestamp: new Date().toISOString()
+        });
+      } catch (imageError) {
+        this.sendToClient(clientId, {
+          type: 'stream_update',
+          processType: 'document_analysis',
+          step: 4,
+          totalSteps: 5,
+          status: 'completed',
+          result: {
+            imageGenerated: false,
+            error: imageError.message
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // Step 5: Final processing
     this.sendToClient(clientId, {
       type: 'stream_update',
       processType: 'document_analysis',
-      step: 4,
-      totalSteps: 4,
+      step: 5,
+      totalSteps: 5,
       status: 'processing',
       message: 'Finalizing analysis...',
       timestamp: new Date().toISOString()
@@ -432,6 +660,12 @@ class MCPIntegrationService extends EventEmitter {
         { message: 'Preparing batch queue...', duration: 1000, result: 'Queue prepared' },
         { message: 'Processing documents...', duration: 3000, result: 'Documents processed' },
         { message: 'Validating results...', duration: 1500, result: 'Validation complete' }
+      ],
+      'product_image_generation': [
+        { message: 'Analyzing product specifications...', duration: 1000, result: 'Specs analyzed' },
+        { message: 'Generating AI prompt...', duration: 800, result: 'Prompt created' },
+        { message: 'Creating product image...', duration: 3000, result: 'Image generated' },
+        { message: 'Optimizing for e-commerce...', duration: 1200, result: 'Image optimized' }
       ]
     };
     
@@ -471,6 +705,15 @@ class MCPIntegrationService extends EventEmitter {
     this.aiService.on('analysis_complete', (data) => {
       this.broadcastToSubscribers('analysis_complete', data);
     });
+
+    // NEW: Image generation events
+    this.aiService.on('image_generation_complete', (data) => {
+      this.broadcastToSubscribers('image_generation_complete', data);
+    });
+
+    this.aiService.on('batch_image_generation_progress', (data) => {
+      this.broadcastToSubscribers('batch_image_generation_progress', data);
+    });
     
     console.log('✅ AI service integration configured');
   }
@@ -487,7 +730,8 @@ class MCPIntegrationService extends EventEmitter {
         'real_time_communication',
         'batch_processing',
         'event_streaming',
-        'system_monitoring'
+        'system_monitoring',
+        'image_generation'
       ],
       available_tools: Array.from(this.mcpServer.tools.keys()),
       ai_capabilities: [
@@ -495,15 +739,29 @@ class MCPIntegrationService extends EventEmitter {
         'supplier_analysis',
         'procurement_intelligence',
         'document_classification',
-        'performance_analytics'
+        'performance_analytics',
+        'product_image_generation',
+        'batch_image_processing'
       ],
       supported_formats: ['pdf', 'image', 'text', 'excel'],
       real_time_features: [
         'websocket_communication',
         'event_subscriptions',
         'streaming_processes',
-        'live_monitoring'
-      ]
+        'live_monitoring',
+        'image_generation_progress'
+      ],
+      image_generation: {
+        providers: ['openai', 'anthropic', 'gemini'],
+        formats: ['png', 'jpeg', 'webp'],
+        max_batch_size: 50,
+        features: [
+          'single_product_generation',
+          'batch_processing',
+          'custom_prompts',
+          'real_time_progress'
+        ]
+      }
     };
   }
 
