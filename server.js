@@ -75,13 +75,14 @@ try {
   console.warn('This is often due to WebSocket port conflicts in Railway');
 }
 
-// *** FIXED: AI Service Manager Singleton ***
+// *** FIXED: AI Service Manager Singleton with Timeout Protection ***
 class AIServiceManager {
   constructor() {
     this.instance = null;
     this.initialized = false;
     this.initializing = false;
     this.initPromise = null;
+    this.lastError = null; // Track initialization errors
   }
 
   async getInstance() {
@@ -103,6 +104,8 @@ class AIServiceManager {
     } catch (error) {
       this.initializing = false;
       this.initPromise = null;
+      this.lastError = error;
+      console.error('❌ AI Service initialization failed:', error);
       throw error;
     }
   }
@@ -111,41 +114,78 @@ class AIServiceManager {
     try {
       console.log('🚀 Initializing AI Service singleton...');
       
-      const UnifiedAIService = require('./services/ai/UnifiedAIService');
-      
-      this.instance = new UnifiedAIService({
-        debugMode: false,
-        enableMocking: false,
-        nodeEnv: process.env.NODE_ENV || 'production'
+      // Add timeout to prevent hanging
+      const initTimeout = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('AI Service initialization timeout')), 30000);
       });
 
-      // Wait for proper initialization
-      await this.instance.ensureReady();
-      
-      this.initialized = true;
-      this.initializing = false;
-      
-      console.log('✅ AI Service singleton initialized successfully');
-      return this.instance;
+      const initProcess = new Promise(async (resolve, reject) => {
+        try {
+          const UnifiedAIService = require('./services/ai/UnifiedAIService');
+          
+          this.instance = new UnifiedAIService({
+            debugMode: false,
+            enableMocking: false,
+            nodeEnv: process.env.NODE_ENV || 'production'
+          });
+
+          // Wait for proper initialization with timeout
+          await this.instance.ensureReady();
+          
+          this.initialized = true;
+          this.initializing = false;
+          this.lastError = null;
+          
+          console.log('✅ AI Service singleton initialized successfully');
+          resolve(this.instance);
+
+        } catch (error) {
+          console.error('❌ AI Service initialization error:', error);
+          reject(error);
+        }
+      });
+
+      // Race between initialization and timeout
+      return await Promise.race([initProcess, initTimeout]);
 
     } catch (error) {
       this.initialized = false;
       this.initializing = false;
       this.instance = null;
+      this.lastError = error;
       console.error('❌ AI Service singleton initialization failed:', error);
       throw error;
     }
   }
 
   isReady() {
-    return this.initialized && this.instance && this.instance.isReady();
+    try {
+      return this.initialized && this.instance && this.instance.isReady();
+    } catch (error) {
+      console.error('❌ AI Service readiness check failed:', error);
+      return false;
+    }
   }
 
   getService() {
     if (!this.isReady()) {
-      throw new Error('AI Service not ready. Call getInstance() first.');
+      const errorMsg = this.lastError ? 
+        `AI Service not ready: ${this.lastError.message}` : 
+        'AI Service not ready. Call getInstance() first.';
+      throw new Error(errorMsg);
     }
     return this.instance;
+  }
+
+  // Add status method for debugging
+  getStatus() {
+    return {
+      initialized: this.initialized,
+      initializing: this.initializing,
+      hasInstance: !!this.instance,
+      isReady: this.isReady(),
+      lastError: this.lastError ? this.lastError.message : null
+    };
   }
 }
 
@@ -349,26 +389,12 @@ app.post('/api/nuclear-test', async (req, res) => {
   }
 });
 
-// *** UPDATED: Image generation endpoint with Firebase save functionality ***
+// *** UPDATED: Image generation endpoint with Firebase save and timeout protection ***
 app.post('/api/ai/generate-image', async (req, res) => {
   try {
     console.log('🎨 Direct OpenAI image generation requested');
     console.log('🔧 Ensuring AI services are initialized...');
     
-    // Use the singleton manager instead of direct service access
-    const aiService = await aiServiceManager.getInstance();
-    
-    if (!aiServiceManager.isReady()) {
-      console.error('❌ AI service not ready after initialization');
-      return res.status(503).json({
-        success: false,
-        error: 'AI Service not fully initialized'
-      });
-    }
-
-    console.log('✅ AI service confirmed ready for image generation');
-
-    // *** UPDATED: Extract productId from request body ***
     const { prompt, style = 'realistic', size = '1024x1024', productId } = req.body;
 
     if (!prompt) {
@@ -378,80 +404,161 @@ app.post('/api/ai/generate-image', async (req, res) => {
       });
     }
 
-    console.log(`🎨 Generating image with prompt: "${prompt}"`);
-
-    // Generate the image using the ready service
-    const result = await aiService.generateImage({
-      prompt,
-      style,
-      size,
-      provider: 'openai'
-    });
-
-    console.log('✅ Image generated successfully');
-
-    // *** NEW: Save to Firebase if productId provided ***
-    let savedToFirebase = false;
-    if (productId && result.imageUrl && db) {
-      try {
-        console.log(`📦 Updating product ${productId} with generated image`);
-        await updateDoc(doc(db, 'products', productId), {
-          imageUrl: result.imageUrl,
-          hasImage: true,
-          imageProvider: 'openai',
-          imageGeneratedAt: new Date(),
-          imagePrompt: prompt
+    // Add timeout to prevent hanging
+    const initTimeout = setTimeout(() => {
+      console.error('❌ AI Service initialization timeout in endpoint');
+      if (!res.headersSent) {
+        res.status(503).json({
+          success: false,
+          error: 'AI Service initialization timeout'
         });
-        console.log(`✅ Product ${productId} updated in Firebase`);
-        savedToFirebase = true;
-      } catch (firebaseError) {
-        console.error('⚠️ Image generated but Firebase update failed:', firebaseError);
-        // Continue anyway - image was generated successfully
+      }
+    }, 45000); // 45 second timeout
+
+    try {
+      // Use the singleton manager with timeout protection
+      const aiService = await Promise.race([
+        aiServiceManager.getInstance(),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('getInstance timeout')), 30000);
+        })
+      ]);
+      
+      clearTimeout(initTimeout);
+      
+      if (!aiServiceManager.isReady()) {
+        console.error('❌ AI service not ready after initialization');
+        return res.status(503).json({
+          success: false,
+          error: 'AI Service not fully initialized',
+          status: aiServiceManager.getStatus()
+        });
+      }
+
+      console.log('✅ AI service confirmed ready for image generation');
+      console.log(`🎨 Generating image with prompt: "${prompt}"`);
+
+      // Generate the image using the ready service
+      const result = await aiService.generateImage({
+        prompt,
+        style,
+        size,
+        provider: 'openai'
+      });
+
+      console.log('✅ Image generated successfully');
+
+      // *** NEW: Save to Firebase if productId provided ***
+      let savedToFirebase = false;
+      if (productId && result.imageUrl && db) {
+        try {
+          console.log(`📦 Updating product ${productId} with generated image`);
+          await updateDoc(doc(db, 'products', productId), {
+            imageUrl: result.imageUrl,
+            hasImage: true,
+            imageProvider: 'openai',
+            imageGeneratedAt: new Date(),
+            imagePrompt: prompt
+          });
+          console.log(`✅ Product ${productId} updated in Firebase`);
+          savedToFirebase = true;
+        } catch (firebaseError) {
+          console.error('⚠️ Image generated but Firebase update failed:', firebaseError);
+          // Continue anyway - image was generated successfully
+        }
+      }
+
+      res.json({
+        success: true,
+        data: result,
+        savedToFirebase: savedToFirebase,
+        productId: productId || null
+      });
+
+    } catch (timeoutError) {
+      clearTimeout(initTimeout);
+      console.error('❌ AI Service timeout or initialization error:', timeoutError);
+      
+      if (!res.headersSent) {
+        res.status(503).json({
+          success: false,
+          error: `AI Service initialization failed: ${timeoutError.message}`,
+          status: aiServiceManager.getStatus()
+        });
       }
     }
-
-    res.json({
-      success: true,
-      data: result,
-      savedToFirebase: savedToFirebase,
-      productId: productId || null
-    });
 
   } catch (error) {
     console.error('❌ Image generation error:', error);
     
-    res.status(503).json({
-      success: false,
-      error: error.message || 'AI Service initialization failed'
-    });
+    if (!res.headersSent) {
+      res.status(503).json({
+        success: false,
+        error: error.message || 'AI Service initialization failed'
+      });
+    }
   }
 });
 
 // Add a health check endpoint specifically for AI services
 app.get('/api/ai/health', async (req, res) => {
   try {
-    if (aiServiceManager.isReady()) {
-      const service = aiServiceManager.getService();
-      const health = await service.healthCheck();
+    let aiServiceStatus = 'disabled';
+    let healthData = {};
+    
+    try {
+      const aiStatus = aiServiceManager.getStatus();
       
-      res.json({
-        success: true,
-        ...health
-      });
-    } else {
-      res.json({
-        success: false,
-        status: 'not ready',
-        ready: false,
-        initialized: aiServiceManager.initialized,
-        initializing: aiServiceManager.initializing
-      });
+      if (aiServiceManager.isReady()) {
+        const service = aiServiceManager.getService();
+        healthData = await service.healthCheck();
+        aiServiceStatus = 'active';
+      } else if (aiStatus.initializing) {
+        aiServiceStatus = 'initializing';
+        healthData = { status: 'initializing', ...aiStatus };
+      } else if (aiStatus.lastError) {
+        aiServiceStatus = 'error';
+        healthData = { status: 'error', error: aiStatus.lastError };
+      }
+    } catch (error) {
+      aiServiceStatus = 'error';
+      healthData = { status: 'error', error: error.message };
     }
+    
+    res.json({
+      success: true,
+      status: aiServiceStatus,
+      ...healthData
+    });
   } catch (error) {
     res.status(503).json({
       success: false,
       error: error.message,
       status: 'error'
+    });
+  }
+});
+
+// *** ADD: Debug endpoint for AI Service status ***
+app.get('/api/ai/debug-status', (req, res) => {
+  try {
+    const status = aiServiceManager.getStatus();
+    res.json({
+      success: true,
+      aiServiceManager: status,
+      environment: {
+        NODE_ENV: process.env.NODE_ENV,
+        hasOpenAIKey: !!process.env.OPENAI_API_KEY,
+        hasDeepSeekKey: !!process.env.DEEPSEEK_API_KEY,
+        hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -1187,15 +1294,27 @@ app.get('/health', async (req, res) => {
   try {
     let aiHealth = { status: 'disabled', modules: 0, prompts: 0, providers: 0, version: '2.0.1' };
     let providerStatus = {};
+    let aiServiceStatus = 'disabled';
     
     try {
+      const aiStatus = aiServiceManager.getStatus();
+      console.log('AI Service Status:', aiStatus);
+      
       if (aiServiceManager.isReady()) {
         const aiService = aiServiceManager.getService();
         aiHealth = await aiService.healthCheck();
         providerStatus = await aiService.getProviderStatus();
+        aiServiceStatus = 'active';
+      } else if (aiStatus.initializing) {
+        aiServiceStatus = 'initializing';
+      } else if (aiStatus.lastError) {
+        aiServiceStatus = 'error';
+        aiHealth.error = aiStatus.lastError;
       }
     } catch (aiError) {
       console.warn('AI health check failed:', aiError.message);
+      aiServiceStatus = 'error';
+      aiHealth.error = aiError.message;
     }
     
     let mcpStatus = { status: 'disabled', reason: 'Service not available' };
@@ -1218,7 +1337,6 @@ app.get('/health', async (req, res) => {
     let categorySystemHealth = { status: 'error', storage: 'fallback' };
     try {
       if (firebaseApp && db) {
-        const { collection, getDocs, limit, query } = require('firebase/firestore');
         const testQuery = query(collection(db, 'ai-prompts'), limit(1));
         await getDocs(testQuery);
         
@@ -1248,12 +1366,12 @@ app.get('/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       services: {
         core: 'active',
-        modularAI: aiHealth.status,
+        modularAI: aiServiceStatus,
         mcp: mcpStatus.status,
         ai: 'active',
-        directOpenAI: aiHealth.status,
-        imageGeneration: 'active',
-        bulkImageGeneration: 'active',
+        directOpenAI: aiServiceStatus,
+        imageGeneration: aiServiceStatus === 'active' ? 'active' : 'disabled',
+        bulkImageGeneration: aiServiceStatus === 'active' ? 'active' : 'disabled',
         promptSystem: promptSystemHealth.status,
         categorySystem: categorySystemHealth.status,
         firebase: firebaseApp ? 'active' : 'disabled',
@@ -1264,7 +1382,9 @@ app.get('/health', async (req, res) => {
         prompts: aiHealth.prompts,
         providers: aiHealth.providers,
         version: aiHealth.version,
-        provider_status: Object.keys(providerStatus).length
+        provider_status: Object.keys(providerStatus).length,
+        status: aiServiceStatus,
+        error: aiHealth.error || null
       },
       mcp: {
         server: mcpStatus.mcp_server || { status: 'disabled' },
@@ -1275,25 +1395,25 @@ app.get('/health', async (req, res) => {
         reason: mcpStatus.reason || 'Unknown'
       },
       imageGeneration: {
-        status: 'active',
+        status: aiServiceStatus === 'active' ? 'active' : 'disabled',
         provider: 'openai',
         model: 'dall-e-3',
         fallback_available: true,
         endpoints: {
           direct: '/api/ai/generate-image',
           product: '/api/mcp/generate-product-images',
-          bulk: '/api/ai/generate-catalog-images'
+          bulk: '/api/ai/generate-catalog-images',
+          debug: '/api/ai/debug-status'
         }
       },
-      // Keep all your other health check properties...
-      version: '2.0.1-catalog-image-fix',
+      version: '2.0.1-catalog-image-fix-timeout',
       deployment: {
         safe: true,
         mcpIssues: !mcpRoutesAvailable,
-        imageGenerationWorking: true,
-        catalogImageGeneration: true,
+        imageGenerationWorking: aiServiceStatus === 'active',
+        catalogImageGeneration: aiServiceStatus === 'active',
         serviceLoops: 'prevented',
-        message: servicesInitialized ? 'Services initialized once' : 'Services initializing'
+        message: `AI Services: ${aiServiceStatus}${aiHealth.error ? ` (${aiHealth.error})` : ''}`
       }
     });
   } catch (error) {
@@ -1304,8 +1424,8 @@ app.get('/health', async (req, res) => {
       deployment: {
         safe: true,
         degraded: true,
-        imageGenerationWorking: true,
-        catalogImageGeneration: true,
+        imageGenerationWorking: false,
+        catalogImageGeneration: false,
         serviceLoops: 'prevented'
       }
     });
