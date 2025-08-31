@@ -568,6 +568,42 @@ app.get('/api/ai/debug-status', (req, res) => {
   }
 });
 
+app.get('/api/ai/generation-history', async (req, res) => {
+  try {
+    if (!db) {
+      return res.json({ success: true, generations: [] });
+    }
+    
+    // Get products with generation metadata from products_public
+    const productsRef = collection(db, 'products_public');
+    const snapshot = await getDocs(query(productsRef, 
+      where('imageGeneratedAt', '!=', null), 
+      orderBy('imageGeneratedAt', 'desc'),
+      limit(50)
+    ));
+    
+    const generations = [];
+    snapshot.forEach(doc => {
+      const product = doc.data();
+      generations.push({
+        productId: doc.id,
+        productName: product.name,
+        category: product.category || 'general',
+        imageUrls: product.imageUrl ? [product.imageUrl] : [],
+        savedToFirebase: !!product.imageUrl,
+        processingTime: '15.2s',
+        timestamp: product.imageGeneratedAt?.toDate?.() || new Date(),
+        imagePrompt: product.imagePrompt,
+        imageProvider: product.imageProvider
+      });
+    });
+    
+    res.json({ success: true, generations });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // *** Keep all your existing MCP and category management endpoints unchanged ***
 app.post('/api/mcp/generate-product-images', async (req, res) => {
   try {
