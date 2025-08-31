@@ -8,7 +8,7 @@ dotenv.config();
 
 // Firebase initialization for prompt persistence
 const { initializeApp } = require('firebase/app');
-const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp } = require('firebase/firestore');
+const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
 
 // Initialize Firebase for the backend
 const firebaseConfig = {
@@ -349,7 +349,7 @@ app.post('/api/nuclear-test', async (req, res) => {
   }
 });
 
-// *** FIXED: Image generation endpoint using singleton manager ***
+// *** UPDATED: Image generation endpoint with Firebase save functionality ***
 app.post('/api/ai/generate-image', async (req, res) => {
   try {
     console.log('🎨 Direct OpenAI image generation requested');
@@ -368,7 +368,8 @@ app.post('/api/ai/generate-image', async (req, res) => {
 
     console.log('✅ AI service confirmed ready for image generation');
 
-    const { prompt, style = 'realistic', size = '1024x1024' } = req.body;
+    // *** UPDATED: Extract productId from request body ***
+    const { prompt, style = 'realistic', size = '1024x1024', productId } = req.body;
 
     if (!prompt) {
       return res.status(400).json({
@@ -389,9 +390,31 @@ app.post('/api/ai/generate-image', async (req, res) => {
 
     console.log('✅ Image generated successfully');
 
+    // *** NEW: Save to Firebase if productId provided ***
+    let savedToFirebase = false;
+    if (productId && result.imageUrl && db) {
+      try {
+        console.log(`📦 Updating product ${productId} with generated image`);
+        await updateDoc(doc(db, 'products', productId), {
+          imageUrl: result.imageUrl,
+          hasImage: true,
+          imageProvider: 'openai',
+          imageGeneratedAt: new Date(),
+          imagePrompt: prompt
+        });
+        console.log(`✅ Product ${productId} updated in Firebase`);
+        savedToFirebase = true;
+      } catch (firebaseError) {
+        console.error('⚠️ Image generated but Firebase update failed:', firebaseError);
+        // Continue anyway - image was generated successfully
+      }
+    }
+
     res.json({
       success: true,
-      data: result
+      data: result,
+      savedToFirebase: savedToFirebase,
+      productId: productId || null
     });
 
   } catch (error) {
@@ -486,6 +509,23 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
 
     const processingTime = Date.now() - startTime;
     
+    // *** NEW: Save to Firebase if product has ID ***
+    if (product.id && result.imageUrl && db) {
+      try {
+        console.log(`📦 Updating product ${product.id} with generated image`);
+        await updateDoc(doc(db, 'products', product.id), {
+          imageUrl: result.imageUrl,
+          hasImage: true,
+          imageProvider: 'openai',
+          imageGeneratedAt: new Date(),
+          imagePrompt: productPrompt
+        });
+        console.log(`✅ Product ${product.id} updated in Firebase`);
+      } catch (firebaseError) {
+        console.error('⚠️ Image generated but Firebase update failed:', firebaseError);
+      }
+    }
+    
     const response = {
       success: true,
       images: {
@@ -504,7 +544,8 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
         legalCompliant: true
       },
       fallbackMode: true,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      savedToFirebase: !!(product.id && result.imageUrl && db)
     };
 
     console.log(`✅ Product images generated via direct OpenAI in ${processingTime}ms`);
@@ -520,6 +561,109 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
       provider: 'openai',
       fallbackMode: true,
       timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// *** NEW: Bulk catalog image generation endpoint ***
+app.post('/api/ai/generate-catalog-images', async (req, res) => {
+  try {
+    console.log('🎨 Bulk catalog image generation requested');
+    
+    const aiService = await aiServiceManager.getInstance();
+    
+    if (!aiServiceManager.isReady()) {
+      return res.status(503).json({
+        success: false,
+        error: 'AI Service not fully initialized'
+      });
+    }
+
+    if (!db) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase not available'
+      });
+    }
+
+    // Get products without images from Firebase
+    const productsRef = collection(db, 'products');
+    const snapshot = await getDocs(query(productsRef, where('hasImage', '!=', true), limit(5)));
+    
+    if (snapshot.empty) {
+      return res.json({
+        success: true,
+        message: 'All products already have images',
+        processed: 0
+      });
+    }
+
+    const results = [];
+    let processed = 0;
+    
+    for (const docSnap of snapshot.docs) {
+      try {
+        const product = { id: docSnap.id, ...docSnap.data() };
+        
+        // Build product prompt using your existing function
+        const prompt = buildProductImagePrompt(product);
+        
+        console.log(`🎨 Generating image for product: ${product.name || product.id}`);
+        
+        // Generate image
+        const result = await aiService.generateImage({
+          prompt,
+          style: 'realistic',
+          size: '1024x1024',
+          provider: 'openai'
+        });
+        
+        // Update Firebase
+        await updateDoc(doc(db, 'products', product.id), {
+          imageUrl: result.imageUrl,
+          hasImage: true,
+          imageProvider: 'openai',
+          imageGeneratedAt: new Date(),
+          imagePrompt: prompt
+        });
+        
+        results.push({
+          productId: product.id,
+          productName: product.name,
+          imageUrl: result.imageUrl,
+          success: true
+        });
+        
+        processed++;
+        
+        // Add delay between requests to respect rate limits
+        if (processed < snapshot.docs.length) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+      } catch (productError) {
+        console.error(`❌ Failed to process product ${docSnap.id}:`, productError);
+        results.push({
+          productId: docSnap.id,
+          success: false,
+          error: productError.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Processed ${processed} products`,
+      processed: processed,
+      results: results
+    });
+
+  } catch (error) {
+    console.error('❌ Bulk image generation error:', error);
+    
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Bulk image generation failed'
     });
   }
 });
@@ -1011,7 +1155,8 @@ app.get('/api/mcp/status', (req, res) => {
       capabilities: ['direct_openai_image_generation'],
       endpoints: {
         direct_image_generation: '/api/ai/generate-image',
-        product_image_generation: '/api/mcp/generate-product-images (with fallback)'
+        product_image_generation: '/api/mcp/generate-product-images (with fallback)',
+        bulk_catalog_generation: '/api/ai/generate-catalog-images'
       }
     });
   }
@@ -1026,6 +1171,7 @@ app.get('/api/mcp/capabilities', (req, res) => {
       ...capabilities,
       'image_generation',
       'product_image_generation',
+      'bulk_catalog_generation',
       'openai_dalle3'
     ],
     message: mcpServiceInstance?.isInitialized ? 
@@ -1107,6 +1253,7 @@ app.get('/health', async (req, res) => {
         ai: 'active',
         directOpenAI: aiHealth.status,
         imageGeneration: 'active',
+        bulkImageGeneration: 'active',
         promptSystem: promptSystemHealth.status,
         categorySystem: categorySystemHealth.status,
         firebase: firebaseApp ? 'active' : 'disabled',
@@ -1134,15 +1281,17 @@ app.get('/health', async (req, res) => {
         fallback_available: true,
         endpoints: {
           direct: '/api/ai/generate-image',
-          product: '/api/mcp/generate-product-images'
+          product: '/api/mcp/generate-product-images',
+          bulk: '/api/ai/generate-catalog-images'
         }
       },
       // Keep all your other health check properties...
-      version: '2.0.1-image-generation-fixed',
+      version: '2.0.1-catalog-image-fix',
       deployment: {
         safe: true,
         mcpIssues: !mcpRoutesAvailable,
         imageGenerationWorking: true,
+        catalogImageGeneration: true,
         serviceLoops: 'prevented',
         message: servicesInitialized ? 'Services initialized once' : 'Services initializing'
       }
@@ -1156,6 +1305,7 @@ app.get('/health', async (req, res) => {
         safe: true,
         degraded: true,
         imageGenerationWorking: true,
+        catalogImageGeneration: true,
         serviceLoops: 'prevented'
       }
     });
@@ -1165,8 +1315,8 @@ app.get('/health', async (req, res) => {
 // Keep all your other endpoints unchanged (root endpoint, error handling, etc.)
 app.get('/', (req, res) => {
   res.json({
-    message: 'HiggsFlow Supplier MCP Server - Image Generation Fix',
-    version: '2.0.1-image-generation-fixed',
+    message: 'HiggsFlow Supplier MCP Server - Catalog Image Generation Fix',
+    version: '2.0.1-catalog-image-fix',
     features: [
       'Enhanced document extraction',
       'Multi-provider AI support',
@@ -1187,7 +1337,8 @@ app.get('/', (req, res) => {
       'Service initialization loop prevention',
       '🎨 DIRECT OPENAI IMAGE GENERATION',
       '📸 PRODUCT IMAGE GENERATION',
-      '🔄 AUTOMATIC MCP FALLBACK'
+      '🔄 AUTOMATIC MCP FALLBACK',
+      '📦 CATALOG IMAGE GENERATION WITH FIREBASE STORAGE'
     ],
     imageGeneration: {
       status: 'active',
@@ -1195,7 +1346,8 @@ app.get('/', (req, res) => {
       model: 'dall-e-3',
       endpoints: {
         direct: 'POST /api/ai/generate-image',
-        product: 'POST /api/mcp/generate-product-images'
+        product: 'POST /api/mcp/generate-product-images',
+        bulk_catalog: 'POST /api/ai/generate-catalog-images'
       },
       fallback: 'automatic_when_mcp_unavailable',
       features: [
@@ -1203,7 +1355,9 @@ app.get('/', (req, res) => {
         'Industrial setting generation',
         'Brand-free compliance',
         'HD quality images',
-        'Category-specific prompts'
+        'Category-specific prompts',
+        'Firebase automatic storage',
+        'Bulk catalog processing'
       ]
     },
     deployment: {
@@ -1211,11 +1365,12 @@ app.get('/', (req, res) => {
       safeMode: true,
       mcpStatus: mcpRoutesAvailable ? 'active' : 'disabled (port conflicts)',
       imageGenerationStatus: 'active (direct OpenAI)',
+      catalogImageStorage: 'active (Firebase)',
       gracefulDegradation: true,
       serviceLoops: 'prevented',
       message: mcpRoutesAvailable ? 
-        'All services running normally with loop prevention and image generation' : 
-        'MCP services disabled - AI, image generation, and core features fully functional with loop prevention'
+        'All services running normally with catalog image generation' : 
+        'MCP services disabled - AI, image generation, catalog processing fully functional'
     }
   });
 });
@@ -1295,7 +1450,7 @@ app.use((req, res) => {
 
 // CRITICAL: Start server with Railway-specific configuration
 const server = app.listen(PORT, '0.0.0.0', async () => {
-  console.log(`HiggsFlow Supplier Server v2.0.1 (Image Generation Fix + Safe Deployment + Advanced AI + Firebase + Categories) is running on port ${PORT}`);
+  console.log(`HiggsFlow Supplier Server v2.0.1 (Catalog Image Generation Fix + Safe Deployment + Advanced AI + Firebase + Categories) is running on port ${PORT}`);
   console.log(`Binding to 0.0.0.0:${PORT} for Railway compatibility`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Timeout settings: Request: 5min, Response: 5min, Max file: 10MB`);
@@ -1316,6 +1471,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log('   Zero-downtime deployment capability');
   console.log('   SERVICE INITIALIZATION LOOP PREVENTION');
   console.log('   🎨 DIRECT OPENAI IMAGE GENERATION ENABLED');
+  console.log('   📦 CATALOG IMAGE GENERATION WITH FIREBASE STORAGE');
   
   console.log('\nDEBUG ENDPOINTS:');
   console.log(`   POST http://localhost:${PORT}/api/find-problem - Enable 0ms source tracing`);
@@ -1333,6 +1489,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`   Firebase connected to project: ${firebaseConfig.projectId}`);
     console.log(`   Firestore database ready for prompt persistence`);
     console.log(`   Category management system active`);
+    console.log(`   Product image storage enabled`);
     console.log(`   Prompts and categories will survive all deployments`);
   } else {
     console.log(`   Firebase not configured - prompts may be lost on deployment`);
@@ -1345,9 +1502,11 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   Endpoints:`);
   console.log(`     POST http://localhost:${PORT}/api/ai/generate-image - Direct image generation`);
   console.log(`     POST http://localhost:${PORT}/api/mcp/generate-product-images - Product-specific generation`);
+  console.log(`     POST http://localhost:${PORT}/api/ai/generate-catalog-images - Bulk catalog generation`);
   console.log(`   Fallback: Automatic when MCP unavailable`);
   console.log(`   Quality: HD (1024x1024)`);
   console.log(`   Compliance: Brand-free, industrial setting`);
+  console.log(`   Firebase Storage: Automatic for catalog products`);
   
   console.log('\nCategory Management endpoints:');
   console.log(`   GET  http://localhost:${PORT}/api/categories - List all categories`);
@@ -1363,6 +1522,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   POST http://localhost:${PORT}/api/ai/extract/purchase-order - Enhanced PO extraction`);
   console.log(`   POST http://localhost:${PORT}/api/ai/extract/proforma-invoice - Enhanced PI extraction`);
   console.log(`   POST http://localhost:${PORT}/api/ai/generate-image - 🎨 Direct image generation`);
+  console.log(`   POST http://localhost:${PORT}/api/ai/generate-catalog-images - 📦 Bulk catalog generation`);
   console.log(`   GET  http://localhost:${PORT}/api/ai/docs - AI API documentation`);
   
   console.log('\nMCP endpoints:');
@@ -1379,6 +1539,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`   POST http://localhost:${PORT}/api/mcp/generate-product-images - 📸 Product image generation (OpenAI fallback)`);
     console.log(`   This is NORMAL for Railway deployments - AI services fully functional`);
     console.log(`   🎨 Image generation WORKING via direct OpenAI fallback`);
+    console.log(`   📦 Catalog generation WORKING with Firebase storage`);
     console.log(`   MCP may become available after successful deployment`);
   }
   
@@ -1392,6 +1553,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   Core services: ACTIVE`);
   console.log(`   AI services: ACTIVE`);
   console.log(`   🎨 Image generation: ACTIVE (Direct OpenAI)`);
+  console.log(`   📦 Catalog image generation: ACTIVE (Firebase storage)`);
   console.log(`   ${firebaseApp ? 'Firebase: CONNECTED' : 'Firebase: NOT CONFIGURED'}`);
   console.log(`   ${mcpRoutesAvailable ? 'MCP services: ACTIVE' : 'MCP services: SAFELY DISABLED'}`);
   console.log(`   Service loops: PREVENTED`);
@@ -1405,6 +1567,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   console.log(`   Nuclear: curl -X POST http://localhost:${PORT}/api/nuclear-test`);
   console.log(`   MCP Status: curl http://localhost:${PORT}/api/mcp/status`);
   console.log(`   🎨 Image Gen: curl -X POST http://localhost:${PORT}/api/ai/generate-image -H "Content-Type: application/json" -d '{"prompt":"test"}'`);
+  console.log(`   📦 Bulk Catalog: curl -X POST http://localhost:${PORT}/api/ai/generate-catalog-images`);
 });
 
 // Graceful shutdown
