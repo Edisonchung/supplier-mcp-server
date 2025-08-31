@@ -456,8 +456,9 @@ app.post('/api/ai/generate-image', async (req, res) => {
           // *** NEW CODE (FIXED) ***
 const { setDoc } = require('firebase/firestore'); // Add this import at the top
 
-await setDoc(doc(db, 'products', productId), {
+await setDoc(doc(db, 'products_public', productId), {
   imageUrl: result.imageUrl,
+  image: result.imageUrl,
   hasImage: true,
   imageProvider: 'openai',
   imageGeneratedAt: new Date(),
@@ -624,8 +625,9 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
     if (product.id && result.imageUrl && db) {
       try {
         console.log(`📦 Updating product ${product.id} with generated image`);
-        await setDoc(doc(db, 'products', product.id), {
+        await setDoc(doc(db, 'products_public', product.id), {
   imageUrl: result.imageUrl,
+  image: result.imageUrl,
   hasImage: true,
   imageProvider: 'openai',
   imageGeneratedAt: new Date(),
@@ -731,8 +733,9 @@ app.post('/api/ai/generate-catalog-images', async (req, res) => {
         });
         
         // Update Firebase
-        await setDoc(doc(db, 'products', product.id), {
+        await setDoc(doc(db, 'products_public', product.id), {
   imageUrl: result.imageUrl,
+  image: result.imageUrl,
   hasImage: true,
   imageProvider: 'openai',
   imageGeneratedAt: new Date(),
