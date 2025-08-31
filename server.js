@@ -8,7 +8,7 @@ dotenv.config();
 
 // Firebase initialization for prompt persistence
 const { initializeApp } = require('firebase/app');
-const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, setdoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
+const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, setDoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
 
 // Initialize Firebase for the backend
 const firebaseConfig = {
@@ -701,7 +701,7 @@ app.post('/api/ai/generate-catalog-images', async (req, res) => {
     }
 
     // Get products without images from Firebase
-    const productsRef = collection(db, 'products');
+    const productsRef = collection(db, 'products_public');
     const snapshot = await getDocs(query(productsRef, where('hasImage', '!=', true), limit(5)));
     
     if (snapshot.empty) {
