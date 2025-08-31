@@ -8,7 +8,7 @@ dotenv.config();
 
 // Firebase initialization for prompt persistence
 const { initializeApp } = require('firebase/app');
-const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
+const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, setdoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
 
 // Initialize Firebase for the backend
 const firebaseConfig = {
@@ -453,13 +453,17 @@ app.post('/api/ai/generate-image', async (req, res) => {
       if (productId && result.imageUrl && db) {
         try {
           console.log(`📦 Updating product ${productId} with generated image`);
-          await updateDoc(doc(db, 'products', productId), {
-            imageUrl: result.imageUrl,
-            hasImage: true,
-            imageProvider: 'openai',
-            imageGeneratedAt: new Date(),
-            imagePrompt: prompt
-          });
+          // *** NEW CODE (FIXED) ***
+const { setDoc } = require('firebase/firestore'); // Add this import at the top
+
+await setDoc(doc(db, 'products', productId), {
+  imageUrl: result.imageUrl,
+  hasImage: true,
+  imageProvider: 'openai',
+  imageGeneratedAt: new Date(),
+  imagePrompt: prompt,
+  productId: productId // Include the ID for reference
+}, { merge: true }); // This will create OR update
           console.log(`✅ Product ${productId} updated in Firebase`);
           savedToFirebase = true;
         } catch (firebaseError) {
@@ -620,13 +624,14 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
     if (product.id && result.imageUrl && db) {
       try {
         console.log(`📦 Updating product ${product.id} with generated image`);
-        await updateDoc(doc(db, 'products', product.id), {
-          imageUrl: result.imageUrl,
-          hasImage: true,
-          imageProvider: 'openai',
-          imageGeneratedAt: new Date(),
-          imagePrompt: productPrompt
-        });
+        await setDoc(doc(db, 'products', product.id), {
+  imageUrl: result.imageUrl,
+  hasImage: true,
+  imageProvider: 'openai',
+  imageGeneratedAt: new Date(),
+  imagePrompt: productPrompt,
+  productId: product.id // Include the ID for reference
+}, { merge: true }); // This will create OR update
         console.log(`✅ Product ${product.id} updated in Firebase`);
       } catch (firebaseError) {
         console.error('⚠️ Image generated but Firebase update failed:', firebaseError);
@@ -726,14 +731,14 @@ app.post('/api/ai/generate-catalog-images', async (req, res) => {
         });
         
         // Update Firebase
-        await updateDoc(doc(db, 'products', product.id), {
-          imageUrl: result.imageUrl,
-          hasImage: true,
-          imageProvider: 'openai',
-          imageGeneratedAt: new Date(),
-          imagePrompt: prompt
-        });
-        
+        await setDoc(doc(db, 'products', product.id), {
+  imageUrl: result.imageUrl,
+  hasImage: true,
+  imageProvider: 'openai',
+  imageGeneratedAt: new Date(),
+  imagePrompt: prompt,
+  productId: product.id // Include the ID for reference
+}, { merge: true }); // This will create OR update
         results.push({
           productId: product.id,
           productName: product.name,
