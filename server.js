@@ -1730,27 +1730,55 @@ app.post('/api/ai/generate-catalog-images', async (req, res) => {
   }
 });
 // *** NEW: Placeholder Image API Endpoint (CORS Fix) ***
+// *** PLACEHOLDER IMAGE FIX: Handle failed placeholder requests ***
 app.get('/api/placeholder/:width/:height', (req, res) => {
-  const { width, height } = req.params;
-  const text = req.query.text || 'Product';
-  
-  // Set headers for SVG response
-  res.setHeader('Content-Type', 'image/svg+xml');
-  res.setHeader('Cache-Control', 'public, max-age=3600');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
-  // Generate clean SVG placeholder
-  const cleanText = decodeURIComponent(text).substring(0, 30);
-  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="#f8f9fa" stroke="#dee2e6" stroke-width="1"/>
-    <text x="50%" y="50%" text-anchor="middle" dy=".3em" font-family="system-ui" font-size="12" fill="#6c757d">
-      ${cleanText}
-    </text>
-  </svg>`;
-  
-  res.send(svg);
+  try {
+    const { width, height } = req.params;
+    const text = req.query.text || 'Product Image';
+    
+    // Validate dimensions
+    const w = Math.max(100, Math.min(2000, parseInt(width) || 400));
+    const h = Math.max(100, Math.min(2000, parseInt(height) || 300));
+    
+    // Clean and truncate text
+    const cleanText = decodeURIComponent(text)
+      .replace(/[<>&"']/g, '') // Remove potentially harmful characters
+      .substring(0, 40);
+    
+    // Set proper headers
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // 24 hours
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    
+    // Generate clean, professional SVG
+    const svg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#f8fafc;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#f1f5f9;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#bg)" stroke="#e2e8f0" stroke-width="2" rx="4"/>
+      <text x="50%" y="50%" text-anchor="middle" dy=".3em" 
+            font-family="system-ui, -apple-system, sans-serif" 
+            font-size="14" font-weight="500" fill="#64748b">
+        ${cleanText}
+      </text>
+      <circle cx="${w-20}" cy="20" r="6" fill="#10b981" opacity="0.7"/>
+    </svg>`;
+    
+    res.send(svg);
+    
+  } catch (error) {
+    console.error('Placeholder generation error:', error);
+    // Fallback minimal SVG
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.send(`<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#f3f4f6" stroke="#d1d5db"/>
+      <text x="50%" y="50%" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#6b7280">Image</text>
+    </svg>`);
+  }
 });
 // Helper function to build product-specific prompts
 function buildProductImagePrompt(product) {
