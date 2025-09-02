@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const multer = require('multer');
+
 
 // Load environment variables
 dotenv.config();
@@ -1443,6 +1445,397 @@ app.post('/api/proxy/download-image', async (req, res) => {
     });
   }
 });
+
+// ============================================================================
+// ENHANCED IMAGE GENERATION API ENDPOINTS FOR DASHBOARD
+// Add after line 1400, before the placeholder endpoint
+// ============================================================================
+
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage() });
+
+// 1. DIRECT IMAGE GENERATION ENDPOINT
+app.post('/api/ai/generate-product-image', async (req, res) => {
+  try {
+    const { 
+      productId, 
+      productName, 
+      productDescription, 
+      category,
+      saveToFirebase = true,
+      collectionName = 'products_public'
+    } = req.body;
+
+    console.log(`🎨 Direct API: Generating image for product: ${productName}`);
+
+    if (!productId || !productName) {
+      return res.status(400).json({
+        success: false,
+        error: 'productId and productName are required'
+      });
+    }
+
+    // Use existing AI service
+    const aiService = await aiServiceManager.getInstance();
+    
+    if (!aiServiceManager.isReady()) {
+      return res.status(503).json({
+        success: false,
+        error: 'AI Service not ready'
+      });
+    }
+
+    const prompt = `Professional industrial product photography of ${productName}. ${productDescription || ''}. Category: ${category || 'component'}. High quality, well-lit, clean background, commercial photography style, no brand logos.`;
+    
+    const imageResult = await aiService.generateImage({
+      prompt: prompt,
+      style: 'realistic',
+      size: '1024x1024',
+      provider: 'openai'
+    });
+
+    const imageUrl = imageResult.imageUrl;
+    const timestamp = new Date().toISOString();
+
+    let savedToFirebase = false;
+    let firestoreImageUrl = imageUrl;
+
+    // Save to Firebase if requested
+    if (saveToFirebase && storage && db) {
+      try {
+        const firebaseUrl = await uploadImageToFirebaseStorage(
+          imageUrl, 
+          productId, 
+          'primary'
+        );
+        
+        await updateProductWithFirebaseImages(
+          productId,
+          firebaseUrl,
+          null,
+          imageUrl,
+          null
+        );
+
+        // Save to image generation history
+        await addDoc(collection(db, 'image_generations'), {
+          productId,
+          productName,
+          imageUrl: firebaseUrl,
+          originalUrl: imageUrl,
+          prompt,
+          status: 'success',
+          createdAt: serverTimestamp(),
+          generationType: 'ai_generated',
+          provider: 'openai',
+          model: 'dall-e-3'
+        });
+
+        savedToFirebase = true;
+        firestoreImageUrl = firebaseUrl;
+        console.log(`✅ Direct API: Image saved to Firebase for product: ${productName}`);
+        
+      } catch (firebaseError) {
+        console.error('Firebase save error:', firebaseError);
+      }
+    }
+
+    res.json({
+      success: true,
+      productId,
+      productName,
+      imageUrl: firestoreImageUrl,
+      originalUrl: imageUrl,
+      prompt,
+      savedToFirebase,
+      collectionUsed: collectionName,
+      generatedAt: timestamp
+    });
+
+  } catch (error) {
+    console.error('Direct image generation error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      productId: req.body.productId,
+      savedToFirebase: false
+    });
+  }
+});
+
+// 2. MANUAL IMAGE UPLOAD ENDPOINT
+app.post('/api/ai/upload-product-images', upload.array('images'), async (req, res) => {
+  try {
+    const { productId, productName, uploadType = 'manual' } = req.body;
+    const files = req.files;
+
+    if (!files || files.length === 0) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'No files uploaded' 
+      });
+    }
+
+    console.log(`📤 Manual upload: ${files.length} images for product: ${productName}`);
+
+    if (!storage || !db) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase Storage not available'
+      });
+    }
+
+    const uploadResults = [];
+
+    for (const file of files) {
+      try {
+        const firebaseUrl = await uploadImageToFirebaseStorage(
+          `data:${file.mimetype};base64,${file.buffer.toString('base64')}`,
+          productId,
+          'manual'
+        );
+
+        // Update product
+        await updateProductWithFirebaseImages(
+          productId,
+          firebaseUrl,
+          null,
+          null,
+          null
+        );
+
+        // Save to history
+        await addDoc(collection(db, 'image_generations'), {
+          productId,
+          productName,
+          imageUrl: firebaseUrl,
+          status: 'success',
+          createdAt: serverTimestamp(),
+          generationType: 'manual_upload',
+          originalFileName: file.originalname
+        });
+
+        uploadResults.push({
+          fileName: file.originalname,
+          url: firebaseUrl,
+          success: true
+        });
+
+      } catch (fileError) {
+        uploadResults.push({
+          fileName: file.originalname,
+          success: false,
+          error: fileError.message
+        });
+      }
+    }
+
+    const successCount = uploadResults.filter(r => r.success).length;
+
+    res.json({
+      success: successCount > 0,
+      productId,
+      productName,
+      uploadResults,
+      summary: {
+        total: files.length,
+        successful: successCount,
+        failed: files.length - successCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Manual upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 3. IMAGE REGENERATION ENDPOINT
+app.post('/api/ai/regenerate-product-image', async (req, res) => {
+  try {
+    const { 
+      imageId,
+      productId, 
+      productName, 
+      productDescription, 
+      category,
+      saveToFirebase = true,
+      collectionName = 'products_public'
+    } = req.body;
+
+    console.log(`🔄 Regenerating image for product: ${productName}`);
+
+    const aiService = await aiServiceManager.getInstance();
+    
+    const prompt = `Professional industrial product photography of ${productName}. ${productDescription || ''}. Category: ${category || 'component'}. High quality, well-lit, clean background, commercial photography style, no brand logos, improved version.`;
+    
+    const imageResult = await aiService.generateImage({
+      prompt: prompt,
+      style: 'realistic',
+      size: '1024x1024',
+      provider: 'openai'
+    });
+
+    let savedToFirebase = false;
+    let firestoreImageUrl = imageResult.imageUrl;
+
+    if (saveToFirebase && storage && db) {
+      try {
+        const firebaseUrl = await uploadImageToFirebaseStorage(
+          imageResult.imageUrl, 
+          productId, 
+          'regenerated'
+        );
+        
+        await updateProductWithFirebaseImages(
+          productId,
+          firebaseUrl,
+          null,
+          imageResult.imageUrl,
+          null
+        );
+
+        await addDoc(collection(db, 'image_generations'), {
+          productId,
+          productName,
+          imageUrl: firebaseUrl,
+          originalUrl: imageResult.imageUrl,
+          prompt,
+          status: 'success',
+          createdAt: serverTimestamp(),
+          generationType: 'ai_regenerated',
+          previousImageId: imageId,
+          provider: 'openai',
+          model: 'dall-e-3'
+        });
+
+        savedToFirebase = true;
+        firestoreImageUrl = firebaseUrl;
+        
+      } catch (firebaseError) {
+        console.error('Firebase save error during regeneration:', firebaseError);
+      }
+    }
+
+    res.json({
+      success: true,
+      productId,
+      productName,
+      imageUrl: firestoreImageUrl,
+      originalUrl: imageResult.imageUrl,
+      prompt,
+      savedToFirebase,
+      regeneratedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('Image regeneration error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      productId: req.body.productId
+    });
+  }
+});
+
+// 4. IMAGE GENERATION HISTORY ENDPOINT
+app.get('/api/ai/images/history', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database not available',
+        data: []
+      });
+    }
+
+    const { limit: limitParam = '50', productId } = req.query;
+    const limitNum = parseInt(limitParam);
+
+    let q = query(
+      collection(db, 'image_generations'),
+      orderBy('createdAt', 'desc'),
+      limit(limitNum)
+    );
+
+    if (productId) {
+      q = query(
+        collection(db, 'image_generations'),
+        where('productId', '==', productId),
+        orderBy('createdAt', 'desc'),
+        limit(limitNum)
+      );
+    }
+
+    const snapshot = await getDocs(q);
+    const images = [];
+
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      images.push({
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt?.toDate?.() || data.createdAt,
+        imageUrl: data.imageUrl || data.originalUrl || null
+      });
+    });
+
+    console.log(`📊 Retrieved ${images.length} image generation records`);
+    res.json(images);
+
+  } catch (error) {
+    console.error('Error fetching image history:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      data: []
+    });
+  }
+});
+
+// 5. FIREBASE STATUS ENDPOINT
+app.get('/api/ai/firebase/status', async (req, res) => {
+  try {
+    const status = {
+      firestore: { connected: !!db },
+      storage: { connected: !!storage },
+      timestamp: new Date().toISOString()
+    };
+
+    if (db) {
+      try {
+        const testRef = doc(db, 'system_test', 'connection');
+        await setDoc(testRef, { test: true, timestamp: serverTimestamp() });
+        status.firestore.connected = true;
+      } catch (err) {
+        status.firestore.connected = false;
+        status.firestore.error = err.message;
+      }
+    }
+
+    if (storage) {
+      status.storage.bucketName = firebaseConfig.storageBucket;
+    }
+
+    res.json({
+      success: status.firestore.connected && status.storage.connected,
+      status,
+      message: 'Firebase connection test completed'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+console.log('🚀 Enhanced Image Generation API endpoints loaded');
 
 // Handle CORS preflight requests
 app.options('/api/proxy/download-image', (req, res) => {
