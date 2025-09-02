@@ -1454,6 +1454,72 @@ app.options('/api/proxy/download-image', (req, res) => {
   res.status(200).send();
 });
 
+// *** FIXED: Download-Image Proxy Endpoint (replaces broken pipe version) ***
+app.get('/download-image', async (req, res) => {
+  try {
+    const { url, productId, imageType } = req.query;
+    
+    console.log('🔄 Image download proxy request received');
+    console.log(`⬇️ Proxying download for product ${productId}, type: ${imageType}`);
+    console.log(`Source URL: ${url ? url.substring(0, 80) + '...' : 'undefined'}`);
+
+    if (!url) {
+      return res.status(400).json({ error: 'URL parameter is required' });
+    }
+
+    // Validate URL format
+    if (!url.startsWith('https://')) {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    // Download image from OpenAI with proper headers
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'HiggsFlow-ImageProxy/1.0',
+        'Accept': 'image/*,*/*;q=0.8',
+        'Referer': 'https://supplier-mcp-server-production.up.railway.app'
+      }
+    });
+
+    if (!response.ok) {
+      console.error(`❌ Failed to fetch image: ${response.status} ${response.statusText}`);
+      return res.status(response.status).json({ 
+        error: `Failed to fetch image: ${response.status} ${response.statusText}` 
+      });
+    }
+
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const contentLength = response.headers.get('content-length');
+    
+    console.log(`✅ Image downloaded successfully: ${contentType}, ${contentLength || 'unknown'} bytes`);
+
+    // Set response headers for the proxy
+    res.set({
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=3600', // 1 hour cache
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    });
+
+    if (contentLength) {
+      res.set('Content-Length', contentLength);
+    }
+
+    // ✅ CRITICAL FIX: Use proper buffer conversion instead of pipe
+    const imageBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(imageBuffer));
+
+  } catch (error) {
+    console.error('❌ Image proxy error:', error.message);
+    res.status(500).json({ 
+      error: 'Proxy download failed', 
+      details: error.message 
+    });
+  }
+});
+
 // *** FIXED: Enhanced bulk catalog image generation endpoint with Firebase Storage ***
 app.post('/api/ai/generate-catalog-images', async (req, res) => {
   try {
