@@ -1390,7 +1390,6 @@ app.post('/api/proxy/download-image', async (req, res) => {
     // Download image from OpenAI (server-side, no CORS issues)
     const response = await fetch(imageUrl, {
       method: 'GET',
-      timeout: 30000, // 30 second timeout
       headers: {
         'User-Agent': 'HiggsFlow-ImageProxy/1.0'
       }
@@ -1431,8 +1430,9 @@ app.post('/api/proxy/download-image', async (req, res) => {
       res.set('Content-Length', contentLength);
     }
     
-    // Stream the image data to the client
-    response.body.pipe(res);
+    // ✅ FIXED: Use proper buffer conversion instead of pipe
+    const imageBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(imageBuffer));
     
   } catch (error) {
     console.error('❌ Image proxy error:', error);
