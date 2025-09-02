@@ -1179,6 +1179,190 @@ app.post('/api/mcp/generate-product-images', async (req, res) => {
   }
 });
 
+// *** NEW: Firebase Storage Upload Proxy Endpoint ***
+app.post('/api/mcp/firebase-storage-upload', async (req, res) => {
+  try {
+    console.log('🔄 Starting Firebase Storage upload via MCP server proxy...');
+    
+    const { productId, images, action } = req.body;
+    
+    // Validate request
+    if (action !== 'upload_to_firebase_storage') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid action. Expected: upload_to_firebase_storage' 
+      });
+    }
+    
+    if (!productId || !images) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields: productId, images' 
+      });
+    }
+
+    if (!storage) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase Storage not initialized on server'
+      });
+    }
+    
+    const firebaseUrls = {};
+    const validImageTypes = ['primary', 'technical', 'application'];
+    const uploadResults = [];
+    
+    console.log(`📦 Processing ${Object.keys(images).length} images for product ${productId}`);
+    
+    // Process each image type
+    for (const [imageType, imageUrl] of Object.entries(images)) {
+      // Skip non-image fields
+      if (!validImageTypes.includes(imageType)) {
+        console.log(`⚠️ Skipping non-image field: ${imageType}`);
+        continue;
+      }
+      
+      // Validate URL
+      if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) {
+        console.log(`⚠️ Invalid URL for ${imageType}:`, imageUrl);
+        continue;
+      }
+      
+      try {
+        console.log(`⬇️ Downloading ${imageType} image from OpenAI...`);
+        
+        // Download image from OpenAI (server-side, no CORS issues)
+        const imageResponse = await fetch(imageUrl, {
+          method: 'GET',
+          timeout: 30000, // 30 second timeout
+          headers: {
+            'User-Agent': 'HiggsFlow-ImageProcessor/1.0'
+          }
+        });
+        
+        if (!imageResponse.ok) {
+          throw new Error(`Failed to download: ${imageResponse.status} ${imageResponse.statusText}`);
+        }
+        
+        const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+        const contentType = imageResponse.headers.get('content-type') || 'image/png';
+        
+        // Validate it's actually an image
+        if (!contentType.startsWith('image/')) {
+          throw new Error(`Invalid content type: ${contentType}`);
+        }
+        
+        console.log(`📦 Downloaded ${imageType} image: ${imageBuffer.length} bytes`);
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const fileName = `${imageType}-${timestamp}.jpg`;
+        const storagePath = `ai-generated/${productId}/${fileName}`;
+        
+        console.log(`⬆️ Uploading ${imageType} to Firebase Storage: ${storagePath}`);
+        
+        // Upload to Firebase Storage
+        const storageRef = ref(storage, storagePath);
+        
+        const uploadResult = await uploadBytes(storageRef, imageBuffer, {
+          contentType: 'image/jpeg',
+          customMetadata: {
+            productId: productId,
+            imageType: imageType,
+            originalSource: 'openai',
+            uploadedAt: new Date().toISOString(),
+            uploadSource: 'server_proxy',
+            originalUrl: imageUrl
+          }
+        });
+        
+        // Get download URL
+        const downloadURL = await getDownloadURL(uploadResult.ref);
+        
+        firebaseUrls[imageType] = downloadURL;
+        uploadResults.push({
+          type: imageType,
+          success: true,
+          url: downloadURL,
+          path: storagePath,
+          size: imageBuffer.length
+        });
+        
+        console.log(`✅ Successfully uploaded ${imageType} image to Firebase Storage`);
+        
+      } catch (imageError) {
+        console.error(`❌ Failed to upload ${imageType} image:`, imageError);
+        uploadResults.push({
+          type: imageType,
+          success: false,
+          error: imageError.message
+        });
+      }
+    }
+    
+    const successCount = Object.keys(firebaseUrls).length;
+    const totalAttempted = Object.keys(images).filter(key => 
+      validImageTypes.includes(key) && 
+      images[key] && 
+      typeof images[key] === 'string' && 
+      images[key].startsWith('http')
+    ).length;
+    
+    // Return results
+    const response = {
+      success: successCount > 0,
+      firebaseUrls,
+      uploadCount: successCount,
+      totalAttempted,
+      uploadResults,
+      message: successCount > 0 
+        ? `Successfully uploaded ${successCount}/${totalAttempted} images to Firebase Storage`
+        : `Failed to upload any images (0/${totalAttempted})`
+    };
+    
+    console.log(`📊 Firebase Storage upload complete: ${response.message}`);
+    res.json(response);
+    
+  } catch (error) {
+    console.error('❌ Firebase Storage upload endpoint error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// *** OPTIONAL: Add cleanup endpoint for old images ***
+app.post('/api/mcp/cleanup-old-images', async (req, res) => {
+  try {
+    const { productId, keepLatest = 3 } = req.body;
+    
+    if (!productId) {
+      return res.status(400).json({ success: false, error: 'productId required' });
+    }
+
+    if (!storage) {
+      return res.status(503).json({
+        success: false,
+        error: 'Firebase Storage not initialized'
+      });
+    }
+    
+    // Note: This would require Firebase Admin SDK for listing files
+    // For now, return success with basic response
+    res.json({
+      success: true,
+      message: `Cleanup endpoint available for product ${productId}`,
+      note: 'Full cleanup requires Firebase Admin SDK integration'
+    });
+    
+  } catch (error) {
+    console.error('❌ Image cleanup error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // *** FIXED: Enhanced bulk catalog image generation endpoint with Firebase Storage ***
 app.post('/api/ai/generate-catalog-images', async (req, res) => {
   try {
