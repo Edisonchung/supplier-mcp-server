@@ -1729,7 +1729,29 @@ app.post('/api/ai/generate-catalog-images', async (req, res) => {
     });
   }
 });
-
+// *** NEW: Placeholder Image API Endpoint (CORS Fix) ***
+app.get('/api/placeholder/:width/:height', (req, res) => {
+  const { width, height } = req.params;
+  const text = req.query.text || 'Product';
+  
+  // Set headers for SVG response
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Generate clean SVG placeholder
+  const cleanText = decodeURIComponent(text).substring(0, 30);
+  const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+    <rect width="100%" height="100%" fill="#f8f9fa" stroke="#dee2e6" stroke-width="1"/>
+    <text x="50%" y="50%" text-anchor="middle" dy=".3em" font-family="system-ui" font-size="12" fill="#6c757d">
+      ${cleanText}
+    </text>
+  </svg>`;
+  
+  res.send(svg);
+});
 // Helper function to build product-specific prompts
 function buildProductImagePrompt(product) {
   const categoryPrompts = {
