@@ -1451,7 +1451,6 @@ app.post('/api/proxy/download-image', async (req, res) => {
 // Add after line 1400, before the placeholder endpoint
 // ============================================================================
 
-const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
 // 1. DIRECT IMAGE GENERATION ENDPOINT
