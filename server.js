@@ -132,19 +132,23 @@ class AIServiceManager {
 
     this.initializing = true;
     this.initPromise = this.initializeService();
-
-    try {
-      const result = await this.initPromise;
-      return result;
-    } catch (error) {
-      this.initializing = false;
-      this.initPromise = null;
-      this.lastError = error;
-      console.error('❌ AI Service initialization failed:', error);
-      throw error;
-    }
+try {
+    const result = await this.initPromise;
+    // FIXED: Ensure state is properly updated
+    this.initialized = true;
+    this.initializing = false;
+    this.lastError = null;
+    return result;
+  } catch (error) {
+    this.initializing = false;
+    this.initPromise = null;
+    this.lastError = error;
+    this.initialized = false; // FIXED: Ensure this is set
+    console.error('❌ AI Service initialization failed:', error);
+    throw error;
   }
-
+}
+  
   async initializeService() {
     try {
       console.log('🚀 Initializing AI Service singleton...');
