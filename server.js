@@ -10,23 +10,7 @@ dotenv.config();
 
 // Firebase initialization for prompt persistence and Firebase Storage
 const { initializeApp } = require('firebase/app');
-const { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  getDocs, 
-  doc, 
-  updateDoc, 
-  setDoc, 
-  deleteDoc, 
-  query, 
-  orderBy, 
-  serverTimestamp, 
-  where, 
-  limit,
-  initializeFirestore  // Add this import
-} = require('firebase/firestore');
-
+const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, setDoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
 const { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
 
 // Initialize Firebase for the backend
@@ -46,21 +30,7 @@ let storage = null;
 
 try {
   firebaseApp = initializeApp(firebaseConfig);
-  
-  // Enhanced Firestore initialization for server environment
-  try {
-    db = initializeFirestore(firebaseApp, {
-      // Server-optimized settings
-      experimentalForceLongPolling: false, // Server can use WebSocket
-      ignoreUndefinedProperties: true,
-      merge: true
-    });
-    console.log('Firestore initialized with server-optimized settings');
-  } catch (firestoreError) {
-    console.warn('Advanced Firestore init failed, using basic mode:', firestoreError.message);
-    db = getFirestore(firebaseApp);
-  }
-  
+  db = getFirestore(firebaseApp);
   storage = getStorage(firebaseApp);
   console.log('Firebase initialized successfully for prompt persistence and Firebase Storage');
 } catch (error) {
@@ -132,23 +102,19 @@ class AIServiceManager {
 
     this.initializing = true;
     this.initPromise = this.initializeService();
-try {
-    const result = await this.initPromise;
-    // FIXED: Ensure state is properly updated
-    this.initialized = true;
-    this.initializing = false;
-    this.lastError = null;
-    return result;
-  } catch (error) {
-    this.initializing = false;
-    this.initPromise = null;
-    this.lastError = error;
-    this.initialized = false; // FIXED: Ensure this is set
-    console.error('❌ AI Service initialization failed:', error);
-    throw error;
+
+    try {
+      const result = await this.initPromise;
+      return result;
+    } catch (error) {
+      this.initializing = false;
+      this.initPromise = null;
+      this.lastError = error;
+      console.error('❌ AI Service initialization failed:', error);
+      throw error;
+    }
   }
-}
-  
+
   async initializeService() {
     try {
       console.log('🚀 Initializing AI Service singleton...');
@@ -276,133 +242,11 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Enhanced CORS Configuration for Firestore compatibility
-const corsOptions = {
-  origin: function (origin, callback) {
-    console.log(`🔍 CORS check for origin: ${origin}`);
-    
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) {
-      console.log('✅ No origin - allowing request');
-      return callback(null, true);
-    }
-    
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:5173', 
-      'http://localhost:4173',
-      'https://higgsflow.vercel.app',
-      'https://higgsflow-git-main-edisonchung.vercel.app',
-      'https://higgsflow-edisonchung.vercel.app',
-      'https://www.higgsflow.com',
-      'https://higgsflow.com',
-      'https://firebaseapp.com',
-      'https://firestore.googleapis.com',
-      'https://googleapis.com',
-      'https://supplier-mcp-server-production.up.railway.app'
-    ];
-    
-    // FIXED: Check allowedOrigins first, then patterns
-    if (allowedOrigins.includes(origin)) {
-      console.log(`✅ Origin ${origin} found in allowed list`);
-      callback(null, true);
-    } else if (origin.includes('localhost') || 
-               origin.includes('vercel.app') || 
-               origin.includes('firebaseapp.com') ||
-               origin.includes('googleapis.com')) {
-      console.log(`✅ Origin ${origin} matches pattern`);
-      callback(null, true);
-    } else {
-      console.warn(`❌ CORS blocked origin: ${origin}`);
-      // TEMPORARY: Allow all for debugging
-      callback(null, true);
-    }
-  },
-  credentials: false,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'User-Agent',
-    'X-Request-Source',
-    'X-MCP-Service',
-    'x-user-email',
-    'X-User-Email',
-    'User-Email',
-    'x-document-type',
-    'X-Document-Type',
-    'Document-Type',
-    'x-file-name',
-    'X-File-Name',
-    'File-Name',
-    'x-extraction-type',
-    'X-Extraction-Type',
-    'Extraction-Type',
-    'Access-Control-Allow-Origin',
-    'Access-Control-Allow-Methods',
-    'Access-Control-Allow-Headers'
-  ],
-  exposedHeaders: [
-    'Content-Length',
-    'X-Response-Time',
-    'X-Request-ID'
-  ],
-  optionsSuccessStatus: 200,
-  preflightContinue: false
-};
-
-// Apply CORS before other middleware
-app.use(cors(corsOptions));
-
-// Manual CORS headers as fallback
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  // Set CORS headers manually for better compatibility
-  res.header('Access-Control-Allow-Origin', origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'false');
-  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
-  res.header('Access-Control-Allow-Headers', 
-    'Origin,X-Requested-With,Content-Type,Accept,Authorization,User-Agent,X-Request-Source,X-MCP-Service,x-user-email,X-User-Email,User-Email,x-document-type,X-Document-Type,Document-Type,x-file-name,X-File-Name,File-Name,x-extraction-type,X-Extraction-Type,Extraction-Type'
-  );
-  res.header('Access-Control-Expose-Headers', 'Content-Length,X-Response-Time,X-Request-ID');
-  res.header('Access-Control-Max-Age', '86400'); // 24 hours
-  
-  // Handle preflight requests
-  if (req.method === 'OPTIONS') {
-    console.log(`OPTIONS request from origin: ${origin}`);
-    res.status(200).end();
-    return;
-  }
-  
-  // Add request ID for tracking
-  req.requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  res.header('X-Request-ID', req.requestId);
-  
-  next();
-});
-
-// Enhanced request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  const origin = req.headers.origin || 'no-origin';
-  const userAgent = req.headers['user-agent']?.substr(0, 50) || 'unknown';
-  
-  console.log(`[${timestamp}] ${req.method} ${req.path} - Origin: ${origin} - UA: ${userAgent}`);
-  
-  // Track response time
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    res.header('X-Response-Time', `${duration}ms`);
-    console.log(`[${timestamp}] Response: ${res.statusCode} in ${duration}ms`);
-  });
-  
-  next();
-});
+// CORS middleware
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true
+}));
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -2758,42 +2602,6 @@ app.get('/health', async (req, res) => {
         firebaseStorageEnabled: false,
         serviceLoops: 'prevented'
       }
-    });
-  }
-});
-
-app.get('/api/ai/debug-init', async (req, res) => {
-  try {
-    console.log('🔍 Debugging AI service initialization...');
-    
-    const status = aiServiceManager.getStatus();
-    console.log('AI Service Manager Status:', status);
-    
-    // Try to initialize
-    try {
-      const aiService = await aiServiceManager.getInstance();
-      console.log('✅ AI Service initialized successfully');
-      res.json({
-        success: true,
-        status: 'initialized',
-        aiManagerStatus: status,
-        message: 'AI service is now ready'
-      });
-    } catch (initError) {
-      console.error('❌ AI Service initialization failed:', initError);
-      res.json({
-        success: false,
-        status: 'failed',
-        aiManagerStatus: status,
-        error: initError.message,
-        stack: initError.stack
-      });
-    }
-  } catch (error) {
-    console.error('❌ Debug endpoint error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
     });
   }
 });
