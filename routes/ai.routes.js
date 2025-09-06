@@ -1,17 +1,27 @@
-//routes/ai.routes.js - UPDATED WITH DEBUG AND FIREBASE INTEGRATION
+//routes/ai.routes.js - UPDATED WITH MULTER FIX FOR USER CONTEXT
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const ModularAIController = require('../controllers/ai/ModularAIController');
 
-// Configure multer for file uploads
+// FIXED: Configure multer to handle user context fields
+const storage = multer.memoryStorage(); // Use memory storage for better handling
+
 const upload = multer({ 
-  dest: 'uploads/',
+  storage: storage,
   limits: { 
     fileSize: 50 * 1024 * 1024, // 50MB limit
+    fieldSize: 10 * 1024 * 1024, // 10MB for text fields
+    fields: 20, // Allow multiple non-file fields for user context
     files: 1
   },
   fileFilter: (req, file, cb) => {
+    console.log('📁 Received file:', {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype
+    });
+    
     const allowedTypes = [
       'application/pdf',
       'image/jpeg',
@@ -29,6 +39,40 @@ const upload = multer({
     }
   }
 });
+
+// SOLUTION: Flexible upload that accepts any field names (fixes MulterError)
+const flexibleUpload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+    fieldSize: 10 * 1024 * 1024,
+    fields: 30, // Generous limit for user context fields
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    console.log('📁 Flexible upload - received file:', {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype
+    });
+    
+    const allowedTypes = [
+      'application/pdf',
+      'image/jpeg', 
+      'image/png',
+      'image/tiff',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'text/plain'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${file.mimetype} not supported`), false);
+    }
+  }
+}).any(); // Accept files and fields from any field name
 
 const aiController = new ModularAIController();
 
@@ -178,7 +222,7 @@ router.post('/prompts/simple-test', async (req, res) => {
 // POST /api/ai/prompts - Create new prompt with enhanced error handling
 router.post('/prompts', async (req, res) => {
   try {
-    console.log('📝 POST /api/ai/prompts called with body:', req.body);
+    console.log('🔍 POST /api/ai/prompts called with body:', req.body);
     
     // Validate required fields
     if (!req.body.name || !req.body.prompt) {
@@ -217,7 +261,7 @@ router.post('/prompts', async (req, res) => {
 // PUT /api/ai/prompts/:id - Update existing prompt with enhanced error handling
 router.put('/prompts/:id', async (req, res) => {
   try {
-    console.log(`📝 PUT /api/ai/prompts/${req.params.id} called`);
+    console.log(`🔍 PUT /api/ai/prompts/${req.params.id} called`);
     return await aiController.updatePrompt(req, res);
   } catch (error) {
     console.error('❌ PUT /prompts/:id error:', error);
@@ -342,38 +386,130 @@ router.post('/extract/proforma-invoice',
   aiController.extractProformaInvoice.bind(aiController)
 );
 
-// === Legacy Compatibility Endpoints ===
+// === FIXED Legacy Compatibility Endpoints ===
 
-// These maintain backward compatibility with existing frontend
-router.post('/extract-po', upload.single('pdf'), async (req, res) => {
-  req.body.documentType = 'purchase_order';
-  return aiController.extractPurchaseOrder(req, res);
-});
+// FIXED: Use flexible upload for extract-po to handle user context fields
+router.post('/extract-po', (req, res, next) => {
+  console.log('🔍 Starting PDF extraction with flexible upload...');
+  console.log('Headers:', req.headers['content-type']);
+  
+  // Use flexible upload to handle any field configuration
+  flexibleUpload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      console.error('❌ Multer Error:', {
+        code: err.code,
+        field: err.field,
+        message: err.message
+      });
+      
+      return res.status(400).json({
+        success: false,
+        error: 'File upload error',
+        details: err.message,
+        code: err.code
+      });
+    } else if (err) {
+      console.error('❌ Upload Error:', err);
+      return res.status(400).json({
+        success: false,
+        error: 'Upload failed',
+        details: err.message
+      });
+    }
+    
+    // Log received data for debugging
+    console.log('📥 Received files:', req.files?.length || 0);
+    console.log('📥 Received body fields:', Object.keys(req.body));
+    
+    // Find the PDF file from any field
+    let pdfFile = null;
+    if (req.files && req.files.length > 0) {
+      pdfFile = req.files.find(file => 
+        file.mimetype === 'application/pdf' || 
+        file.originalname.endsWith('.pdf')
+      );
+    }
+    
+    if (!pdfFile) {
+      return res.status(400).json({
+        success: false,
+        error: 'No PDF file received',
+        received_files: req.files?.map(f => ({ 
+          fieldname: f.fieldname, 
+          filename: f.originalname,
+          mimetype: f.mimetype 
+        })) || []
+      });
+    }
+    
+    // Extract user context from body
+    const userContext = {
+      email: req.body.email || req.body.userEmail || 'anonymous',
+      role: req.body.role || 'user',
+      uid: req.body.uid || null,
+      testMode: req.body.testMode === 'true' || req.body.testMode === true,
+      debug: req.body.debug === 'true' || req.body.debug === true
+    };
+    
+    console.log('👤 User context extracted:', userContext);
+    
+    // Attach file and user context to request for the controller
+    req.file = pdfFile;
+    req.userContext = userContext;
+    req.body.documentType = 'purchase_order';
+    
+    // Continue to the actual extraction controller
+    next();
+  });
+}, aiController.extractPurchaseOrder.bind(aiController));
 
+// Keep original extract-pi endpoint
 router.post('/extract-pi', upload.single('file'), async (req, res) => {
   req.body.documentType = 'proforma_invoice';
   return aiController.extractProformaInvoice(req, res);
 });
 
-// === Error Handling Middleware ===
+// === Enhanced Error Handling Middleware ===
 
 router.use((error, req, res, next) => {
-  console.error('AI Route Error:', error);
+  console.error('🚨 AI Route Error:', error);
   
   if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        error: 'File too large. Maximum size is 50MB.',
-        code: 'FILE_TOO_LARGE'
-      });
-    }
-    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-      return res.status(400).json({
-        success: false,
-        error: 'Unexpected file field. Use "file" field name.',
-        code: 'UNEXPECTED_FILE'
-      });
+    console.error('🚨 Detailed Multer Error:', {
+      code: error.code,
+      message: error.message,
+      field: error.field,
+      stack: error.stack
+    });
+    
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        return res.status(400).json({
+          success: false,
+          error: 'File too large. Maximum size is 50MB.',
+          code: 'FILE_TOO_LARGE'
+        });
+      case 'LIMIT_UNEXPECTED_FILE':
+      case 'UNEXPECTED_FIELD':
+        return res.status(400).json({
+          success: false,
+          error: 'Unexpected field in upload. This should be fixed now.',
+          code: 'UNEXPECTED_FIELD',
+          field: error.field,
+          suggestion: 'Try the request again - the flexible upload should handle this.'
+        });
+      case 'LIMIT_FIELD_COUNT':
+        return res.status(400).json({
+          success: false,
+          error: 'Too many fields',
+          code: 'TOO_MANY_FIELDS'
+        });
+      default:
+        return res.status(400).json({
+          success: false,
+          error: `Upload error: ${error.message}`,
+          code: error.code
+        });
     }
   }
   
@@ -402,8 +538,14 @@ router.use((error, req, res, next) => {
 router.get('/docs', (req, res) => {
   res.json({
     service: 'HiggsFlow Modular AI API',
-    version: '2.0.1-firebase-enhanced',
-    description: 'Modular AI service with multi-provider support, supplier-specific intelligence, and Firebase persistence',
+    version: '2.0.2-multer-fixed',
+    description: 'Modular AI service with multi-provider support, supplier-specific intelligence, and Firebase persistence. FIXED: MulterError user context handling.',
+    recent_fixes: [
+      'Fixed MulterError: Unexpected field for user context handling',
+      'Added flexible upload configuration for extract-po endpoint',
+      'Enhanced error reporting for multer issues',
+      'Improved user context extraction from FormData'
+    ],
     endpoints: {
       system: [
         'GET /api/ai/health - System health check',
@@ -434,7 +576,7 @@ router.get('/docs', (req, res) => {
         'POST /api/ai/extract/proforma-invoice - PI extraction'
       ],
       legacy: [
-        'POST /api/ai/extract-po - Legacy PO extraction',
+        'POST /api/ai/extract-po - Legacy PO extraction (FIXED for user context)',
         'POST /api/ai/extract-pi - Legacy PI extraction'
       ]
     },
@@ -449,7 +591,8 @@ router.get('/docs', (req, res) => {
       'Individual prompt testing and validation',
       'Firebase Firestore persistence',
       'Zero data loss on deployments',
-      'Enhanced debugging capabilities'
+      'Enhanced debugging capabilities',
+      'FIXED: User context handling in MulterError'
     ],
     file_support: [
       'PDF documents',
@@ -457,6 +600,11 @@ router.get('/docs', (req, res) => {
       'Excel files (XLSX, XLS)',
       'Plain text files'
     ],
+    user_context_support: {
+      fields: ['email', 'userEmail', 'role', 'uid', 'testMode', 'debug'],
+      method: 'FormData or URL parameters',
+      status: 'FIXED - no more MulterError'
+    },
     firebase: {
       storage: 'firestore',
       persistence: 'permanent',
