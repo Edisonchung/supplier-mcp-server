@@ -832,7 +832,7 @@ RETURN ENHANCED STRUCTURED JSON:
   // Enhanced API methods with better error handling...
 
   /**
-   * Save a new prompt to MCP system with enhanced validation
+   * Save a new prompt to MCP system with enhanced validation and CORS handling
    */
   async savePrompt(promptData) {
     try {
@@ -841,11 +841,11 @@ RETURN ENHANCED STRUCTURED JSON:
         throw new Error('Missing required fields: name, category, prompt');
       }
 
-      const response = await axios.post(`${this.apiBase}/api/ai/prompts`, promptData, {
-        timeout: this.requestTimeout,
+      const response = await this.makeRequest(`${this.apiBase}/api/ai/prompts`, {
+        method: 'POST',
+        data: promptData,
         headers: {
-          'Content-Type': 'application/json',
-          'X-Request-Source': 'extraction-service'
+          'Content-Type': 'application/json'
         }
       });
 
@@ -863,7 +863,7 @@ RETURN ENHANCED STRUCTURED JSON:
   }
 
   /**
-   * Enhanced search with better fallback handling
+   * Enhanced search with better fallback handling and CORS support
    */
   async searchPrompts(query, filters = {}) {
     try {
@@ -872,11 +872,8 @@ RETURN ENHANCED STRUCTURED JSON:
         ...filters
       });
 
-      const response = await axios.get(`${this.apiBase}/api/ai/prompts/search?${params}`, {
-        timeout: this.requestTimeout,
-        headers: {
-          'X-Request-Source': 'extraction-service'
-        }
+      const response = await this.makeRequest(`${this.apiBase}/api/ai/prompts/search?${params}`, {
+        method: 'GET'
       });
 
       if (response.status === 200) {
@@ -886,8 +883,51 @@ RETURN ENHANCED STRUCTURED JSON:
       }
     } catch (error) {
       console.warn('⚠️ Failed to search prompts via API:', error.message);
-      console.log('🔄 Falling back to local search...');
+      
+      // Enhanced CORS error handling
+      if (error.message.includes('CORS') || error.message.includes('Access-Control')) {
+        console.log('🔄 CORS issue detected - falling back to local search...');
+      } else {
+        console.log('🔄 Network issue detected - falling back to local search...');
+      }
+      
       return this.searchFallbackPrompts(query, filters);
+    }
+  }
+
+  /**
+   * Track prompt usage analytics with enhanced context and CORS handling
+   */
+  async trackPromptUsage(promptId, context) {
+    try {
+      const payload = {
+        context: {
+          ...context,
+          timestamp: new Date().toISOString(),
+          userAgent: 'HiggsFlow-MCPPromptService/1.1'
+        },
+        system: 'dual_extraction',
+        version: '1.1'
+      };
+
+      await this.makeRequest(`${this.apiBase}/api/ai/prompts/${promptId}/usage`, {
+        method: 'POST',
+        data: payload,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log(`📈 Usage tracked for prompt: ${promptId}`);
+    } catch (error) {
+      // Silently fail - analytics shouldn't break extraction
+      // But provide more detailed logging for CORS issues
+      if (error.message.includes('CORS') || error.message.includes('Access-Control')) {
+        console.warn('📊 Analytics tracking failed due to CORS:', error.message);
+        console.warn('🔧 Consider updating Firebase security rules for analytics endpoints');
+      } else {
+        console.warn('📊 Analytics tracking failed:', error.message);
+      }
     }
   }
 
