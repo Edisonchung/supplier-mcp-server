@@ -1,4 +1,4 @@
-// routes/api.routes.js - FIXED: Real AI Service Integration with ALL Original Code Preserved
+// routes/api.routes.js - FIXED: Real AI Service Integration with ALL Original Code Preserved + MulterError Fix
 const express = require('express');
 const router = express.Router();
 const upload = require('../config/multer');
@@ -9,6 +9,59 @@ const extractionController = require('../controllers/extraction.controller');
 const duplicateController = require('../controllers/duplicate.controller');
 const recommendationController = require('../controllers/recommendation.controller');
 const WebSearchService = require('../services/webSearchService');
+
+// ✅ CRITICAL FIX: Configure flexible upload to handle user context fields
+const storage = multer.memoryStorage();
+
+// ✅ NEW: Flexible upload configuration for extraction endpoints
+const flexibleUpload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fieldSize: 10 * 1024 * 1024, // 10MB for text fields
+    fields: 30, // Allow many non-file fields for user context
+    fieldNameSize: 100, // Increase field name size limit
+    fieldSize: 10 * 1024 * 1024 // 10MB for each field
+  },
+  fileFilter: (req, file, cb) => {
+    console.log('📁 Flexible upload received file:', {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size
+    });
+    
+    // Accept all supported file types
+    const allowedMimes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/jpg', 
+      'image/png',
+      'image/tiff',
+      'image/tif',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'text/plain',
+      'message/rfc822'
+    ];
+    
+    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.xls', '.xlsx', '.txt', '.eml'];
+    const hasValidMime = allowedMimes.includes(file.mimetype);
+    const hasValidExtension = allowedExtensions.some(ext => 
+      file.originalname.toLowerCase().endsWith(ext)
+    );
+    
+    if (hasValidMime || hasValidExtension) {
+      cb(null, true);
+    } else {
+      console.warn('❌ File type not supported:', {
+        mimetype: file.mimetype,
+        filename: file.originalname
+      });
+      cb(new Error(`File type ${file.mimetype} not supported. Allowed types: ${allowedMimes.join(', ')}`), false);
+    }
+  }
+}).any(); // ✅ CRITICAL: Use .any() to accept files from any field name
 
 // ✅ PRESERVED: Import the correct AI services
 let MCPPromptService, UnifiedAIService, AIService;
@@ -57,6 +110,64 @@ let globalAIService = null;
     console.log('⚠️ System will use pattern-based fallback only');
   }
 })();
+
+// ✅ NEW: Helper function to extract user context from flexible upload
+function extractUserContextFromFlexible(req) {
+  console.log('👤 Extracting user context from flexible upload...');
+  console.log('📥 Received body fields:', Object.keys(req.body || {}));
+  console.log('📥 Received files:', req.files ? req.files.length : 0);
+  
+  const userContext = {};
+  
+  // Extract user context from body fields
+  if (req.body) {
+    userContext.email = req.body.email || req.body.userEmail;
+    userContext.role = req.body.role;
+    userContext.uid = req.body.uid;
+    userContext.testMode = req.body.testMode === 'true' || req.body.testMode === true;
+    userContext.debug = req.body.debug === 'true' || req.body.debug === true;
+    userContext.supplierInfo = req.body.supplierInfo ? JSON.parse(req.body.supplierInfo) : null;
+    userContext.documentType = req.body.documentType;
+    userContext.forcedPromptId = req.body.forcedPromptId;
+  }
+  
+  console.log('👤 User context extracted:', userContext);
+  return userContext;
+}
+
+// ✅ NEW: Helper function to find the uploaded file from flexible upload
+function findUploadedFile(req, expectedTypes = []) {
+  console.log('🔍 Finding uploaded file from flexible upload...');
+  
+  if (!req.files || req.files.length === 0) {
+    console.warn('❌ No files found in request');
+    return null;
+  }
+  
+  // Find the first file that matches expected types (if specified)
+  let file = req.files[0]; // Default to first file
+  
+  if (expectedTypes.length > 0) {
+    const matchingFile = req.files.find(f => 
+      expectedTypes.some(type => 
+        f.mimetype.includes(type) || 
+        f.originalname.toLowerCase().includes(type)
+      )
+    );
+    if (matchingFile) {
+      file = matchingFile;
+    }
+  }
+  
+  console.log('📁 Found file:', {
+    fieldname: file.fieldname,
+    originalname: file.originalname,
+    mimetype: file.mimetype,
+    size: file.size
+  });
+  
+  return file;
+}
 
 // ✅ PRESERVED: Helper function to get prompts directly from AI system
 async function getPromptsDirectly() {
@@ -271,7 +382,7 @@ router.get('/health', (req, res) => {
     environment: process.env.NODE_ENV || 'development',
     features: ['pdf', 'image', 'excel', 'email', 'multi-ai', 'validation', 'recommendations', 'ptp-detection', 'web-search', 'category-management', 'product-enhancement'],
     capabilities: {
-      maxFileSize: '10MB',
+      maxFileSize: '50MB', // ✅ UPDATED: Increased file size limit
       timeouts: {
         request: '5 minutes',
         response: '5 minutes',
@@ -296,16 +407,185 @@ router.get('/health', (req, res) => {
       productEnhancement: true,
       mcpPromptSystem: !!MCPPromptService,
       unifiedAI: !!globalAIService, // ✅ PRESERVED: Indicate UnifiedAI availability
-      realAIProductEnhancement: !!globalAIService // ✅ NEW: Real AI status
+      realAIProductEnhancement: !!globalAIService, // ✅ NEW: Real AI status
+      flexibleFileUpload: true, // ✅ NEW: Indicate flexible upload support
+      userContextExtraction: true // ✅ NEW: User context support
     }
   });
 });
 
-// ✅ PRESERVED: All extraction endpoints
-router.post('/extract-po', upload.single('pdf'), extractionController.extractFromPDF);
-router.post('/extract-image', upload.single('image'), extractionController.extractFromImage);
-router.post('/extract-excel', upload.single('excel'), extractionController.extractFromExcel);
-router.post('/extract-email', upload.single('email'), extractionController.extractFromEmail);
+// ✅ CRITICAL FIX: Updated extraction endpoints with flexible upload and user context support
+router.post('/extract-po', flexibleUpload, (req, res, next) => {
+  console.log('📄 PDF PO extraction endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find the PDF file
+    const file = findUploadedFile(req, ['pdf', 'application/pdf']);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No PDF file found in request',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ PDF file prepared for extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.extractFromPDF(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ PDF extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess PDF extraction request',
+      details: error.message
+    });
+  }
+});
+
+router.post('/extract-image', flexibleUpload, (req, res, next) => {
+  console.log('🖼️ Image extraction endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find the image file
+    const file = findUploadedFile(req, ['image', 'jpeg', 'jpg', 'png', 'tiff']);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image file found in request',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ Image file prepared for extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.extractFromImage(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Image extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess image extraction request',
+      details: error.message
+    });
+  }
+});
+
+router.post('/extract-excel', flexibleUpload, (req, res, next) => {
+  console.log('📊 Excel extraction endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find the Excel file
+    const file = findUploadedFile(req, ['excel', 'xls', 'xlsx', 'spreadsheet']);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No Excel file found in request',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ Excel file prepared for extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.extractFromExcel(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Excel extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess Excel extraction request',
+      details: error.message
+    });
+  }
+});
+
+router.post('/extract-email', flexibleUpload, (req, res, next) => {
+  console.log('📧 Email extraction endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find the email file
+    const file = findUploadedFile(req, ['email', 'eml', 'msg', 'text']);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No email file found in request',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ Email file prepared for extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.extractFromEmail(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Email extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess email extraction request',
+      details: error.message
+    });
+  }
+});
 
 // ✅ PRESERVED: Get current prompt system status for a user
 router.get('/prompt-system-status', extractionController.getPromptSystemStatus);
@@ -316,11 +596,88 @@ router.post('/set-prompt-system-preference', extractionController.setPromptSyste
 // ✅ PRESERVED: Get prompt system analytics and performance data
 router.get('/prompt-system-analytics', extractionController.getPromptSystemAnalytics);
 
-// ✅ PRESERVED: Test extraction with specific system (single file)
-router.post('/test-extraction', upload.single('pdf'), extractionController.testExtraction);
+// ✅ CRITICAL FIX: Updated test extraction with flexible upload
+router.post('/test-extraction', flexibleUpload, (req, res, next) => {
+  console.log('🧪 Test extraction endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find any supported file
+    const file = findUploadedFile(req);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file found in request for testing',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ File prepared for test extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.testExtraction(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Test extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess test extraction request',
+      details: error.message
+    });
+  }
+});
 
-// ✅ PRESERVED: Batch comparison test (multiple files)
-router.post('/batch-comparison-test', upload.array('files', 10), extractionController.batchComparisonTest);
+// ✅ CRITICAL FIX: Updated batch comparison test with flexible upload
+router.post('/batch-comparison-test', flexibleUpload, (req, res, next) => {
+  console.log('🧪 Batch comparison test endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No files found in request for batch testing',
+        code: 'NO_FILES_FOUND',
+        received_files: 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach user context to req for controller
+    req.userContext = userContext;
+    
+    console.log('✅ Files prepared for batch comparison test:', {
+      fileCount: req.files.length,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.batchComparisonTest(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Batch comparison test preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess batch comparison test request',
+      details: error.message
+    });
+  }
+});
 
 // ✅ PRESERVED: Duplicate and recommendations
 router.post('/check-duplicate', duplicateController.checkDuplicate);
@@ -330,8 +687,49 @@ router.post('/get-recommendations', recommendationController.getRecommendations)
 router.post('/save-correction', recommendationController.saveCorrection);
 router.post('/detect-category', recommendationController.detectCategory);
 
-// ✅ PRESERVED: Bank payment extraction
-router.post('/bank-payments/extract', upload.single('file'), extractionController.extractBankPaymentSlip);
+// ✅ CRITICAL FIX: Updated bank payment extraction with flexible upload
+router.post('/bank-payments/extract', flexibleUpload, (req, res, next) => {
+  console.log('🏦 Bank payment extraction endpoint called with flexible upload');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find any supported file
+    const file = findUploadedFile(req);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file found in request for bank payment extraction',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ File prepared for bank payment extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the extraction controller
+    extractionController.extractBankPaymentSlip(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Bank payment extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess bank payment extraction request',
+      details: error.message
+    });
+  }
+});
 
 // ================================================================
 // ✅ CRITICAL FIX: PRODUCT ENHANCEMENT ENDPOINT WITH REAL AI CALLS (REPLACING STATIC RESPONSE)
@@ -361,7 +759,7 @@ router.post('/enhance-product', async (req, res) => {
         );
         
         if (productPrompts && productPrompts.length > 0) {
-          console.log(`📝 Found ${productPrompts.length} product enhancement prompts`);
+          console.log(`🔍 Found ${productPrompts.length} product enhancement prompts`);
           
           // ✅ PRESERVED: Support forced prompt selection
           if (forcedPromptId) {
@@ -569,7 +967,7 @@ router.get('/product-enhancement-status', async (req, res) => {
       const allPrompts = await getPromptsDirectly();
       
       if (allPrompts && allPrompts.length > 0) {
-        console.log(`📝 Found ${allPrompts.length} total prompts directly`);
+        console.log(`🔍 Found ${allPrompts.length} total prompts directly`);
         
         // Filter for product enhancement prompts
         const productPrompts = allPrompts.filter(p => 
@@ -579,7 +977,7 @@ router.get('/product-enhancement-status', async (req, res) => {
         
         if (productPrompts && productPrompts.length > 0) {
           availablePrompts = productPrompts.length;
-          console.log(`📝 Found ${productPrompts.length} product enhancement prompts`);
+          console.log(`🔍 Found ${productPrompts.length} product enhancement prompts`);
           
           // ✅ PRESERVED: Build available prompts list with metadata
           availablePromptsList = productPrompts.map(prompt => ({
@@ -660,7 +1058,9 @@ router.get('/product-enhancement-status', async (req, res) => {
         fallback_ready: true,
         version: '2.0',
         last_check: new Date().toISOString(),
-        real_ai_available: !!globalAIService // ✅ NEW: Real AI availability
+        real_ai_available: !!globalAIService, // ✅ NEW: Real AI availability
+        flexible_upload_support: true, // ✅ NEW: Flexible upload support
+        user_context_support: true // ✅ NEW: User context support
       }
     };
     
@@ -728,7 +1128,9 @@ router.get('/product-enhancement-health', async (req, res) => {
         legacy_ai_enhancement: !!AIService,
         pattern_analysis: true,
         fallback_protection: true,
-        prompt_selector: true // ✅ PRESERVED: Indicate prompt selector support
+        prompt_selector: true, // ✅ PRESERVED: Indicate prompt selector support
+        flexible_file_upload: true, // ✅ NEW: Flexible upload support
+        user_context_extraction: true // ✅ NEW: User context support
       }
     };
     
@@ -1384,31 +1786,118 @@ router.post('/web-search/bulk', async (req, res) => {
   }
 });
 
-// ✅ PRESERVED: Error handling for file upload
+// ✅ CRITICAL FIX: Enhanced error handling for file upload with specific MulterError handling
 router.use((error, req, res, next) => {
+  console.error('🚨 File upload error occurred:', error);
+  
   if (error instanceof multer.MulterError) {
+    console.error('🚨 MulterError detected:', {
+      code: error.code,
+      field: error.field,
+      message: error.message
+    });
+    
     if (error.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({
         success: false,
-        error: 'File too large. Maximum size is 10MB'
+        error: 'File too large. Maximum size is 50MB.',
+        code: 'FILE_TOO_LARGE',
+        details: {
+          max_size: '50MB',
+          suggestion: 'Please compress your file or upload a smaller version'
+        }
       });
     }
+    
     if (error.code === 'LIMIT_FILE_COUNT') {
       return res.status(400).json({
         success: false,
-        error: 'Too many files. Maximum is 10 files'
+        error: 'Too many files. Maximum is 10 files.',
+        code: 'TOO_MANY_FILES',
+        details: {
+          max_files: 10,
+          suggestion: 'Please select fewer files and try again'
+        }
       });
     }
-  }
-  
-  if (error.message && error.message.includes('Invalid file type')) {
+    
+    if (error.code === 'LIMIT_FIELD_COUNT') {
+      return res.status(400).json({
+        success: false,
+        error: 'Too many form fields.',
+        code: 'TOO_MANY_FIELDS',
+        details: {
+          max_fields: 30,
+          suggestion: 'Reduce the number of form fields in your request'
+        }
+      });
+    }
+    
+    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({
+        success: false,
+        error: 'Unexpected file field. This should be handled by flexible upload.',
+        code: 'UNEXPECTED_FILE_FIELD',
+        details: {
+          field: error.field,
+          suggestion: 'The flexible upload should handle any field names. This is a configuration issue.'
+        }
+      });
+    }
+    
+    if (error.code === 'LIMIT_PART_COUNT') {
+      return res.status(400).json({
+        success: false,
+        error: 'Too many multipart sections.',
+        code: 'TOO_MANY_PARTS',
+        details: {
+          suggestion: 'Reduce the complexity of your multipart request'
+        }
+      });
+    }
+    
+    // Generic MulterError
     return res.status(400).json({
       success: false,
-      error: error.message
+      error: `File upload error: ${error.message}`,
+      code: error.code || 'MULTER_ERROR',
+      details: {
+        field: error.field,
+        suggestion: 'Check your file and form data format'
+      }
     });
   }
   
-  next(error);
+  if (error.message && error.message.includes('File type') && error.message.includes('not supported')) {
+    return res.status(400).json({
+      success: false,
+      error: error.message,
+      code: 'UNSUPPORTED_FILE_TYPE',
+      supported_types: [
+        'PDF (.pdf)', 
+        'Images (.jpg, .jpeg, .png, .tiff)', 
+        'Excel (.xls, .xlsx)', 
+        'Text (.txt)', 
+        'Email (.eml)'
+      ],
+      details: {
+        suggestion: 'Please upload a file in one of the supported formats'
+      }
+    });
+  }
+  
+  // Enhanced error response for other errors
+  console.error('🚨 Non-multer error:', error);
+  res.status(500).json({
+    success: false,
+    error: 'Internal server error during file processing',
+    message: process.env.NODE_ENV === 'development' ? error.message : 'Please try again later',
+    code: 'INTERNAL_ERROR',
+    timestamp: new Date().toISOString(),
+    details: {
+      suggestion: 'If this persists, please contact support with the timestamp above'
+    }
+  });
 });
 
 // ✅ PRESERVED: Export just the router since category initialization is handled in server.js
