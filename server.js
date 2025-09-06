@@ -2758,6 +2758,42 @@ app.get('/health', async (req, res) => {
   }
 });
 
+app.get('/api/ai/debug-init', async (req, res) => {
+  try {
+    console.log('🔍 Debugging AI service initialization...');
+    
+    const status = aiServiceManager.getStatus();
+    console.log('AI Service Manager Status:', status);
+    
+    // Try to initialize
+    try {
+      const aiService = await aiServiceManager.getInstance();
+      console.log('✅ AI Service initialized successfully');
+      res.json({
+        success: true,
+        status: 'initialized',
+        aiManagerStatus: status,
+        message: 'AI service is now ready'
+      });
+    } catch (initError) {
+      console.error('❌ AI Service initialization failed:', initError);
+      res.json({
+        success: false,
+        status: 'failed',
+        aiManagerStatus: status,
+        error: initError.message,
+        stack: initError.stack
+      });
+    }
+  } catch (error) {
+    console.error('❌ Debug endpoint error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Keep all your existing category management endpoints...
 app.post('/api/categories', async (req, res) => {
   try {
