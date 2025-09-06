@@ -275,8 +275,13 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // Enhanced CORS Configuration for Firestore compatibility
 const corsOptions = {
   origin: function (origin, callback) {
+    console.log(`🔍 CORS check for origin: ${origin}`);
+    
     // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
+    if (!origin) {
+      console.log('✅ No origin - allowing request');
+      return callback(null, true);
+    }
     
     const allowedOrigins = [
       'http://localhost:3000',
@@ -293,19 +298,23 @@ const corsOptions = {
       'https://supplier-mcp-server-production.up.railway.app'
     ];
     
-    // Allow any localhost and Vercel preview URLs
-    if (origin.includes('localhost') || 
-        origin.includes('vercel.app') || 
-        origin.includes('firebaseapp.com') ||
-        origin.includes('googleapis.com') ||
-        allowedOrigins.includes(origin)) {
+    // FIXED: Check allowedOrigins first, then patterns
+    if (allowedOrigins.includes(origin)) {
+      console.log(`✅ Origin ${origin} found in allowed list`);
+      callback(null, true);
+    } else if (origin.includes('localhost') || 
+               origin.includes('vercel.app') || 
+               origin.includes('firebaseapp.com') ||
+               origin.includes('googleapis.com')) {
+      console.log(`✅ Origin ${origin} matches pattern`);
       callback(null, true);
     } else {
-      console.warn('CORS blocked origin:', origin);
-      callback(null, true); // Allow all for now to fix CORS issues
+      console.warn(`❌ CORS blocked origin: ${origin}`);
+      // TEMPORARY: Allow all for debugging
+      callback(null, true);
     }
   },
-  credentials: false, // Disable credentials to prevent CORS issues
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: [
     'Content-Type',
@@ -316,18 +325,18 @@ const corsOptions = {
     'User-Agent',
     'X-Request-Source',
     'X-MCP-Service',
-    'x-user-email',           
-    'X-User-Email',           
+    'x-user-email',
+    'X-User-Email',
     'User-Email',
-    'x-document-type',        
-    'X-Document-Type',        
-    'Document-Type',          
-    'x-file-name',           
-    'X-File-Name',            
-    'File-Name',              
-    'x-extraction-type',      
-    'X-Extraction-Type',      
-    'Extraction-Type',       
+    'x-document-type',
+    'X-Document-Type',
+    'Document-Type',
+    'x-file-name',
+    'X-File-Name',
+    'File-Name',
+    'x-extraction-type',
+    'X-Extraction-Type',
+    'Extraction-Type',
     'Access-Control-Allow-Origin',
     'Access-Control-Allow-Methods',
     'Access-Control-Allow-Headers'
