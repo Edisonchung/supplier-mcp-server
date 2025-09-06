@@ -360,6 +360,25 @@ app.use((req, res, next) => {
   next();
 });
 
+// Enhanced request logging middleware
+app.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const origin = req.headers.origin || 'no-origin';
+  const userAgent = req.headers['user-agent']?.substr(0, 50) || 'unknown';
+  
+  console.log(`[${timestamp}] ${req.method} ${req.path} - Origin: ${origin} - UA: ${userAgent}`);
+  
+  // Track response time
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    res.header('X-Response-Time', `${duration}ms`);
+    console.log(`[${timestamp}] Response: ${res.statusCode} in ${duration}ms`);
+  });
+  
+  next();
+});
+
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
