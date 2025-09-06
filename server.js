@@ -318,7 +318,16 @@ const corsOptions = {
     'X-MCP-Service',
     'x-user-email',           
     'X-User-Email',           
-    'User-Email',             
+    'User-Email',
+    'x-document-type',        
+    'X-Document-Type',        
+    'Document-Type',          
+    'x-file-name',           
+    'X-File-Name',            
+    'File-Name',              
+    'x-extraction-type',      
+    'X-Extraction-Type',      
+    'Extraction-Type',       
     'Access-Control-Allow-Origin',
     'Access-Control-Allow-Methods',
     'Access-Control-Allow-Headers'
@@ -344,7 +353,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Credentials', 'false');
   res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
   res.header('Access-Control-Allow-Headers', 
-    'Origin,X-Requested-With,Content-Type,Accept,Authorization,User-Agent,X-Request-Source,X-MCP-Service,x-user-email,X-User-Email,User-Email'
+    'Origin,X-Requested-With,Content-Type,Accept,Authorization,User-Agent,X-Request-Source,X-MCP-Service,x-user-email,X-User-Email,User-Email,x-document-type,X-Document-Type,Document-Type,x-file-name,X-File-Name,File-Name,x-extraction-type,X-Extraction-Type,Extraction-Type'
   );
   res.header('Access-Control-Expose-Headers', 'Content-Length,X-Response-Time,X-Request-ID');
   res.header('Access-Control-Max-Age', '86400'); // 24 hours
