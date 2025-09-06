@@ -10,7 +10,23 @@ dotenv.config();
 
 // Firebase initialization for prompt persistence and Firebase Storage
 const { initializeApp } = require('firebase/app');
-const { getFirestore, collection, addDoc, getDocs, doc, updateDoc, setDoc, deleteDoc, query, orderBy, serverTimestamp, where, limit } = require('firebase/firestore');
+const { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  getDocs, 
+  doc, 
+  updateDoc, 
+  setDoc, 
+  deleteDoc, 
+  query, 
+  orderBy, 
+  serverTimestamp, 
+  where, 
+  limit,
+  initializeFirestore  // Add this import
+} = require('firebase/firestore');
+
 const { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
 
 // Initialize Firebase for the backend
@@ -30,7 +46,21 @@ let storage = null;
 
 try {
   firebaseApp = initializeApp(firebaseConfig);
-  db = getFirestore(firebaseApp);
+  
+  // Enhanced Firestore initialization for server environment
+  try {
+    db = initializeFirestore(firebaseApp, {
+      // Server-optimized settings
+      experimentalForceLongPolling: false, // Server can use WebSocket
+      ignoreUndefinedProperties: true,
+      merge: true
+    });
+    console.log('Firestore initialized with server-optimized settings');
+  } catch (firestoreError) {
+    console.warn('Advanced Firestore init failed, using basic mode:', firestoreError.message);
+    db = getFirestore(firebaseApp);
+  }
+  
   storage = getStorage(firebaseApp);
   console.log('Firebase initialized successfully for prompt persistence and Firebase Storage');
 } catch (error) {
@@ -242,11 +272,93 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// CORS middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
-  credentials: true
-}));
+// Enhanced CORS Configuration for Firestore compatibility
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:5173', 
+      'http://localhost:4173',
+      'https://higgsflow.vercel.app',
+      'https://higgsflow-git-main-edisonchung.vercel.app',
+      'https://higgsflow-edisonchung.vercel.app',
+      'https://www.higgsflow.com',
+      'https://higgsflow.com',
+      'https://firebaseapp.com',
+      'https://firestore.googleapis.com',
+      'https://googleapis.com',
+      'https://supplier-mcp-server-production.up.railway.app'
+    ];
+    
+    // Allow any localhost and Vercel preview URLs
+    if (origin.includes('localhost') || 
+        origin.includes('vercel.app') || 
+        origin.includes('firebaseapp.com') ||
+        origin.includes('googleapis.com') ||
+        allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn('CORS blocked origin:', origin);
+      callback(null, true); // Allow all for now to fix CORS issues
+    }
+  },
+  credentials: false, // Disable credentials to prevent CORS issues
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'User-Agent',
+    'X-Request-Source',
+    'X-MCP-Service',
+    'Access-Control-Allow-Origin',
+    'Access-Control-Allow-Methods',
+    'Access-Control-Allow-Headers'
+  ],
+  exposedHeaders: [
+    'Content-Length',
+    'X-Response-Time',
+    'X-Request-ID'
+  ],
+  optionsSuccessStatus: 200,
+  preflightContinue: false
+};
+
+// Apply CORS before other middleware
+app.use(cors(corsOptions));
+
+// Manual CORS headers as fallback
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  // Set CORS headers manually for better compatibility
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'false');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS,PATCH');
+  res.header('Access-Control-Allow-Headers', 
+    'Origin,X-Requested-With,Content-Type,Accept,Authorization,User-Agent,X-Request-Source,X-MCP-Service'
+  );
+  res.header('Access-Control-Expose-Headers', 'Content-Length,X-Response-Time,X-Request-ID');
+  res.header('Access-Control-Max-Age', '86400'); // 24 hours
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    console.log(`OPTIONS request from origin: ${origin}`);
+    res.status(200).end();
+    return;
+  }
+  
+  // Add request ID for tracking
+  req.requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  res.header('X-Request-ID', req.requestId);
+  
+  next();
+});
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
