@@ -1,12 +1,22 @@
 // controllers/clientInvoiceController.js
-// Client Invoice Extraction Controller - Following existing patterns
-// Supports: Flow Solution, Broadwater, EMI Technology, EMI Automation
+// Client Invoice Extraction Controller with VISION API support for scanned PDFs
+// Handles both text-based and image-based (scanned) PDFs
 
 const fs = require('fs');
-const MCPPromptService = require('../services/MCPPromptService');
+const path = require('path');
+const pdfParse = require('pdf-parse');
 
 class ClientInvoiceController {
   
+  constructor() {
+    // Check for OpenAI API key (for Vision)
+    this.openaiApiKey = process.env.OPENAI_API_KEY;
+    this.anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+    
+    // Minimum text length to consider PDF as text-based (not scanned)
+    this.MIN_TEXT_LENGTH = 100;
+  }
+
   /**
    * Extract data from client/sales invoice PDF
    * POST /api/extract-invoice
@@ -32,70 +42,78 @@ class ClientInvoiceController {
       console.log('📄 Processing file:', {
         originalName: file.originalname,
         mimetype: file.mimetype,
-        size: file.size
+        size: file.size,
+        hasBuffer: !!file.buffer,
+        hasPath: !!file.path
       });
       
       // Extract user context
       const userContext = req.userContext || {
-        email: req.body.userEmail || req.body.email || req.headers['x-user-email'] || 'anonymous',
-        role: req.body.role || 'user',
-        uid: req.body.uid || null
+        email: req.body?.userEmail || req.body?.email || req.headers['x-user-email'] || 'anonymous',
+        role: req.body?.role || 'user',
+        uid: req.body?.uid || null
       };
       
-      console.log('👤 User context:', userContext);
+      console.log('👤 User context:', userContext.email);
       
       // Detect company format from filename
       const companyFormat = this.detectCompanyFormat(file.originalname);
       console.log('🏢 Detected company format:', companyFormat);
       
-      // Get MCP prompt for client invoice extraction
-      let selectedPrompt = null;
-      let promptSource = 'default';
+      // Get PDF buffer
+      let pdfBuffer;
+      if (file.buffer) {
+        pdfBuffer = file.buffer;
+      } else if (file.path) {
+        pdfBuffer = fs.readFileSync(file.path);
+      } else {
+        throw new Error('No file buffer or path available');
+      }
+      
+      // Try to extract text from PDF first
+      let pdfText = '';
+      let isScannedPDF = false;
       
       try {
-        if (MCPPromptService) {
-          const prompts = await MCPPromptService.getPromptsByCategory('client_invoice');
-          
-          if (prompts && prompts.length > 0) {
-            // Try to find company-specific prompt first
-            selectedPrompt = prompts.find(p => 
-              p.name?.toLowerCase().includes(companyFormat.toLowerCase()) ||
-              p.suppliers?.includes(companyFormat)
-            );
-            
-            // Fallback to generic client invoice prompt
-            if (!selectedPrompt) {
-              selectedPrompt = prompts.find(p => 
-                p.name?.toLowerCase().includes('client invoice') ||
-                p.id === 'client_invoice_extraction'
-              );
-            }
-            
-            if (selectedPrompt) {
-              promptSource = 'mcp_firestore';
-              console.log('✅ Using MCP prompt:', selectedPrompt.name);
-            }
-          }
-        }
-      } catch (promptError) {
-        console.warn('⚠️ MCP prompt fetch failed, using default:', promptError.message);
+        const pdfData = await pdfParse(pdfBuffer);
+        pdfText = pdfData.text || '';
+        console.log('📖 PDF text extraction result:', {
+          textLength: pdfText.length,
+          pages: pdfData.numpages,
+          preview: pdfText.substring(0, 200)
+        });
+        
+        // If text is too short, it's likely a scanned PDF
+        isScannedPDF = pdfText.trim().length < this.MIN_TEXT_LENGTH;
+        
+      } catch (parseError) {
+        console.warn('⚠️ PDF text extraction failed:', parseError.message);
+        isScannedPDF = true;
       }
       
-      // Use default prompt if MCP not available
-      if (!selectedPrompt) {
-        selectedPrompt = this.getDefaultPrompt(companyFormat);
-        promptSource = 'default_fallback';
-        console.log('📋 Using default prompt for:', companyFormat);
-      }
+      console.log('🔍 PDF type detected:', isScannedPDF ? 'SCANNED (image-based)' : 'TEXT-BASED');
       
-      // Call AI extraction service
-      const extractionResult = await this.callAIExtraction(file, selectedPrompt, userContext);
+      // Extract data using appropriate method
+      let extractionResult;
+      let extractionMethod;
+      
+      if (isScannedPDF) {
+        // Use Vision API for scanned PDFs
+        console.log('👁️ Using VISION API for scanned PDF extraction...');
+        extractionResult = await this.extractWithVision(pdfBuffer, companyFormat, file.originalname);
+        extractionMethod = 'vision_api';
+      } else {
+        // Use text-based extraction
+        console.log('📝 Using TEXT-BASED extraction...');
+        extractionResult = await this.extractFromText(pdfText, companyFormat);
+        extractionMethod = 'text_extraction';
+      }
       
       // Process and normalize the extracted data
       const processedData = this.processExtractedData(extractionResult, companyFormat, file);
       
       // Detect job codes from all locations
-      const detectedJobCodes = this.detectAllJobCodes(processedData);
+      const detectedJobCodes = this.detectAllJobCodes(processedData, file.originalname);
       processedData.detectedJobCodes = detectedJobCodes;
       processedData.linkedJobCodes = detectedJobCodes.map(jc => ({ id: jc, jobCode: jc }));
       processedData.jobCodes = detectedJobCodes;
@@ -104,9 +122,12 @@ class ClientInvoiceController {
       
       console.log('✅ ====== CLIENT INVOICE EXTRACTION COMPLETED ======');
       console.log('Processing time:', processingTime, 'ms');
+      console.log('Extraction method:', extractionMethod);
       console.log('Invoice number:', processedData.invoiceNumber);
+      console.log('Client name:', processedData.clientName);
       console.log('Detected job codes:', detectedJobCodes);
       console.log('Items extracted:', processedData.items?.length || 0);
+      console.log('Total amount:', processedData.totalAmount);
       
       return res.json({
         success: true,
@@ -114,8 +135,8 @@ class ClientInvoiceController {
         extraction_metadata: {
           documentType: 'client_invoice',
           companyFormat: companyFormat,
-          promptUsed: selectedPrompt?.name || 'default',
-          promptSource: promptSource,
+          extractionMethod: extractionMethod,
+          isScannedPDF: isScannedPDF,
           processingTime: processingTime,
           confidence: extractionResult.confidence || 0.85,
           jobCodesDetected: detectedJobCodes.length,
@@ -136,9 +157,321 @@ class ClientInvoiceController {
       });
     }
   }
-  
+
   /**
-   * Detect company format from filename or content
+   * Extract data from scanned PDF using Vision API
+   */
+  async extractWithVision(pdfBuffer, companyFormat, filename) {
+    console.log('👁️ Starting Vision-based extraction...');
+    
+    // Convert PDF to base64 for Vision API
+    const base64PDF = pdfBuffer.toString('base64');
+    
+    // Build the extraction prompt
+    const extractionPrompt = this.buildExtractionPrompt(companyFormat, filename);
+    
+    // Try OpenAI GPT-4 Vision first
+    if (this.openaiApiKey) {
+      try {
+        console.log('🤖 Calling OpenAI GPT-4 Vision...');
+        return await this.callOpenAIVision(base64PDF, extractionPrompt);
+      } catch (openaiError) {
+        console.warn('⚠️ OpenAI Vision failed:', openaiError.message);
+      }
+    }
+    
+    // Fallback to Anthropic Claude Vision
+    if (this.anthropicApiKey) {
+      try {
+        console.log('🤖 Calling Anthropic Claude Vision...');
+        return await this.callAnthropicVision(base64PDF, extractionPrompt);
+      } catch (anthropicError) {
+        console.warn('⚠️ Anthropic Vision failed:', anthropicError.message);
+      }
+    }
+    
+    throw new Error('No Vision API available. Configure OPENAI_API_KEY or ANTHROPIC_API_KEY.');
+  }
+
+  /**
+   * Call OpenAI GPT-4 Vision API
+   */
+  async callOpenAIVision(base64PDF, prompt) {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.openaiApiKey}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o', // GPT-4o has vision capabilities
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert document extraction AI. Extract data from invoices accurately and return valid JSON only.'
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:application/pdf;base64,${base64PDF}`,
+                  detail: 'high'
+                }
+              }
+            ]
+          }
+        ],
+        max_tokens: 4000,
+        temperature: 0.1
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+    }
+    
+    const result = await response.json();
+    const content = result.choices?.[0]?.message?.content || '';
+    
+    console.log('📥 OpenAI Vision response length:', content.length);
+    
+    return this.parseAIResponse(content);
+  }
+
+  /**
+   * Call Anthropic Claude Vision API
+   */
+  async callAnthropicVision(base64PDF, prompt) {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.anthropicApiKey,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: 'application/pdf',
+                  data: base64PDF
+                }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
+        ]
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Anthropic API error: ${response.status} - ${errorText}`);
+    }
+    
+    const result = await response.json();
+    const content = result.content?.[0]?.text || '';
+    
+    console.log('📥 Anthropic Vision response length:', content.length);
+    
+    return this.parseAIResponse(content);
+  }
+
+  /**
+   * Extract data from text-based PDF using DeepSeek
+   */
+  async extractFromText(pdfText, companyFormat) {
+    console.log('📝 Starting text-based extraction...');
+    
+    const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+    
+    if (!DEEPSEEK_API_KEY) {
+      // Fallback to basic regex extraction
+      console.log('⚠️ No DEEPSEEK_API_KEY, using regex extraction');
+      return this.extractWithRegex(pdfText, companyFormat);
+    }
+    
+    const prompt = this.buildExtractionPrompt(companyFormat, '');
+    
+    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: prompt
+          },
+          {
+            role: 'user',
+            content: `Extract data from this invoice:\n\n${pdfText}`
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 3000
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`DeepSeek API error: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    const content = result.choices?.[0]?.message?.content || '';
+    
+    console.log('📥 DeepSeek response length:', content.length);
+    
+    return this.parseAIResponse(content);
+  }
+
+  /**
+   * Build extraction prompt for AI
+   */
+  buildExtractionPrompt(companyFormat, filename) {
+    return `Extract ALL data from this CLIENT INVOICE document and return ONLY valid JSON.
+
+CRITICAL: This is an OUTGOING invoice FROM our company (${companyFormat}) TO a client.
+
+=== JOB CODE DETECTION ===
+Job codes appear in these locations:
+- END of line item descriptions (e.g., "...brake motor. FS-S5054")
+- REMARK field
+- OUR REFERENCE field
+- Filename: ${filename}
+
+Job code pattern: 2-4 uppercase letters + hyphen + optional letter + 3-5 digits
+Examples: FS-S5054, BWS-S1022, EMIT-S001, FS-S4659
+
+=== EXTRACT THESE FIELDS ===
+
+Return this EXACT JSON structure:
+{
+  "invoiceNumber": "string - the invoice number",
+  "date": "string - invoice date in YYYY-MM-DD format",
+  "dueDate": "string - due date if present",
+  "deliveryOrderNo": "string - DO number",
+  "yourOrderNo": "string - client's PO number reference",
+  "terms": "string - payment terms",
+  "remark": "string - remark field (may contain job code)",
+  "ourReference": "string - our reference field",
+  
+  "clientName": "string - client/customer company name",
+  "clientAddress": "string - client address",
+  
+  "items": [
+    {
+      "itemNumber": "number",
+      "productCode": "string - part number or item code",
+      "description": "string - full description including any job codes at the end",
+      "quantity": "number",
+      "uom": "string - unit of measure",
+      "unitPrice": "number",
+      "amount": "number"
+    }
+  ],
+  
+  "subtotal": "number",
+  "discount": "number or 0",
+  "tax": "number or 0",
+  "total": "number - grand total",
+  "currency": "string - default MYR",
+  
+  "bankDetails": {
+    "beneficiary": "string",
+    "bankName": "string",
+    "accountNumber": "string"
+  }
+}
+
+IMPORTANT:
+1. Extract ALL line items, not just the first few
+2. Look for job codes (like FS-S5054) at the END of item descriptions
+3. Parse all numbers correctly (remove commas, handle decimals)
+4. Convert dates to YYYY-MM-DD format
+5. Return ONLY the JSON object, no markdown or explanation`;
+  }
+
+  /**
+   * Parse AI response to extract JSON
+   */
+  parseAIResponse(content) {
+    try {
+      // Try to find JSON in the response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          data: parsed,
+          confidence: 0.9,
+          provider: 'ai_vision'
+        };
+      }
+    } catch (parseError) {
+      console.warn('⚠️ Failed to parse JSON from AI response:', parseError.message);
+    }
+    
+    // Return raw content if JSON parsing fails
+    return {
+      data: { rawContent: content },
+      confidence: 0.5,
+      provider: 'ai_vision'
+    };
+  }
+
+  /**
+   * Fallback regex extraction for text-based PDFs
+   */
+  extractWithRegex(pdfText, companyFormat) {
+    console.log('🔍 Using regex extraction fallback...');
+    
+    const data = {};
+    
+    // Invoice number patterns
+    const invMatch = pdfText.match(/(?:Invoice|INV)[\s#:]*([A-Z0-9-]+)/i);
+    if (invMatch) data.invoiceNumber = invMatch[1];
+    
+    // Date patterns
+    const dateMatch = pdfText.match(/(?:Date|Dated?)[\s:]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
+    if (dateMatch) data.date = dateMatch[1];
+    
+    // PO number
+    const poMatch = pdfText.match(/(?:PO|P\.O\.|Purchase Order)[\s#:]*([A-Z0-9-]+)/i);
+    if (poMatch) data.yourOrderNo = poMatch[1];
+    
+    // Total amount
+    const totalMatch = pdfText.match(/(?:Total|Grand Total|Amount Due)[\s:]*(?:RM|MYR)?\s*([\d,]+\.?\d*)/i);
+    if (totalMatch) data.total = parseFloat(totalMatch[1].replace(/,/g, ''));
+    
+    return {
+      data: data,
+      confidence: 0.4,
+      provider: 'regex_fallback'
+    };
+  }
+
+  /**
+   * Detect company format from filename
    */
   detectCompanyFormat(filename) {
     const name = (filename || '').toLowerCase();
@@ -156,176 +489,9 @@ class ClientInvoiceController {
       return 'FLOW_SOLUTION';
     }
     
-    // Check invoice number patterns in filename
-    if (name.match(/bws-inv/i)) return 'BROADWATER';
-    if (name.match(/emit-inv/i)) return 'EMI_TECHNOLOGY';
-    if (name.match(/emi-inv\d/i)) return 'EMI_AUTOMATION';
-    
     return 'FLOW_SOLUTION'; // Default
   }
-  
-  /**
-   * Get default extraction prompt based on company
-   */
-  getDefaultPrompt(companyFormat) {
-    const basePrompt = `Extract CLIENT INVOICE (Sales Invoice) data from this document.
 
-CRITICAL: This is an OUTGOING invoice FROM our company TO a client.
-
-=== COMPANY FORMAT: ${companyFormat} ===
-
-JOB CODE DETECTION - Look in these locations:
-- Flow Solution: END of line item descriptions (e.g., "...brake motor. FS-S5054")
-- Broadwater: REMARK field (e.g., "BWS-S1022")
-- EMI Technology: OUR REFERENCE field (e.g., "EMIT-S001")
-- EMI Automation: May not have job codes
-
-Job code pattern: 2-4 uppercase letters + hyphen + optional letter + 3-5 digits
-Examples: FS-S5054, BWS-S1022, EMIT-S001
-
-=== EXTRACT THESE FIELDS ===
-
-HEADER:
-- invoiceNumber: Invoice number
-- date: Invoice date (convert DD/MM/YYYY to YYYY-MM-DD)
-- deliveryOrderNo: DO number
-- yourOrderNo: Client's PO number
-- terms: Payment terms
-- remark: Remark field (may contain job code)
-- ourReference: Our Reference field (may contain job code)
-
-CLIENT (SOLD TO):
-- clientName: Company name
-- clientAddress: Full address
-
-LINE ITEMS (array):
-- itemNumber, productCode, description, quantity, unitPrice, amount
-- jobCode: Detected from description if present
-
-TOTALS:
-- subtotal, total, currency (default MYR)
-
-BANK DETAILS:
-- beneficiary, bankName, accountNumber
-
-Return JSON format.`;
-
-    return {
-      id: `default_${companyFormat.toLowerCase()}`,
-      name: `Default ${companyFormat} Invoice Extraction`,
-      prompt: basePrompt,
-      temperature: 0.1,
-      maxTokens: 2500
-    };
-  }
-  
-  /**
-   * Call AI extraction service
-   */
-  async callAIExtraction(file, prompt, userContext) {
-    // Try to use UnifiedAIService if available
-    try {
-      const UnifiedAIService = require('../services/ai/UnifiedAIService');
-      const aiService = new UnifiedAIService();
-      
-      const result = await aiService.extractDocument({
-        file: file,
-        documentType: 'client_invoice',
-        prompt: prompt.prompt,
-        temperature: prompt.temperature || 0.1,
-        maxTokens: prompt.maxTokens || 2500,
-        userContext: userContext
-      });
-      
-      return result;
-      
-    } catch (aiError) {
-      console.warn('⚠️ UnifiedAIService not available, using DeepSeek directly');
-      
-      // Fallback to direct DeepSeek call
-      return this.callDeepSeekDirectly(file, prompt);
-    }
-  }
-  
-  /**
-   * Direct DeepSeek API call as fallback
-   */
-  async callDeepSeekDirectly(file, prompt) {
-    const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
-    
-    if (!DEEPSEEK_API_KEY) {
-      throw new Error('DEEPSEEK_API_KEY not configured');
-    }
-    
-    // FIX: Read from file.path (disk) OR file.buffer (memory)
-    const pdfParse = require('pdf-parse');
-    
-    let pdfBuffer;
-    if (file.buffer) {
-      pdfBuffer = file.buffer;
-    } else if (file.path) {
-      pdfBuffer = fs.readFileSync(file.path);
-    } else {
-      throw new Error('No file buffer or path available');
-    }
-    
-    const pdfData = await pdfParse(pdfBuffer);
-    const textContent = pdfData.text;
-    
-    console.log('📄 Extracted PDF text length:', textContent.length);
-    console.log('📄 PDF text preview:', textContent.substring(0, 500));
-    
-    const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: prompt.prompt
-          },
-          {
-            role: 'user',
-            content: `Extract data from this invoice:\n\n${textContent}`
-          }
-        ],
-        temperature: prompt.temperature || 0.1,
-        max_tokens: prompt.maxTokens || 2500
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`DeepSeek API error: ${response.status}`);
-    }
-    
-    const result = await response.json();
-    const content = result.choices?.[0]?.message?.content || '';
-    
-    // Parse JSON from response
-    try {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return {
-          data: JSON.parse(jsonMatch[0]),
-          confidence: 0.85,
-          provider: 'deepseek'
-        };
-      }
-    } catch (parseError) {
-      console.warn('⚠️ Failed to parse AI response as JSON');
-    }
-    
-    return {
-      data: { rawText: content },
-      confidence: 0.5,
-      provider: 'deepseek'
-    };
-  }
-  
   /**
    * Process and normalize extracted data
    */
@@ -355,9 +521,6 @@ Return JSON format.`;
       // Company-specific fields
       remark: this.extractField(data, ['remark', 'remarks']),
       ourReference: this.extractField(data, ['ourReference', 'our_reference', 'reference']),
-      accountNo: this.extractField(data, ['accountNo', 'account_no']),
-      salesCode: this.extractField(data, ['salesCode', 'sales_code']),
-      area: this.extractField(data, ['area']),
       
       // Items
       items: this.processLineItems(data),
@@ -369,7 +532,7 @@ Return JSON format.`;
       totalAmount: this.extractAmount(data, ['total', 'totalAmount', 'total_amount', 'grandTotal']),
       currency: this.extractField(data, ['currency']) || 'MYR',
       
-      // Bank details based on company
+      // Bank details
       bankDetails: this.getBankDetails(companyFormat, data),
       
       // Company info
@@ -394,7 +557,7 @@ Return JSON format.`;
     
     return processed;
   }
-  
+
   /**
    * Helper methods
    */
@@ -425,7 +588,7 @@ Return JSON format.`;
     if (!dateStr) return '';
     
     // DD/MM/YYYY to YYYY-MM-DD
-    const ddmmyyyy = dateStr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const ddmmyyyy = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
     if (ddmmyyyy) {
       return `${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2, '0')}-${ddmmyyyy[1].padStart(2, '0')}`;
     }
@@ -455,11 +618,11 @@ Return JSON format.`;
   }
   
   extractClientName(data) {
-    const fields = ['clientName', 'client_name', 'customer', 'customerName', 'soldTo'];
+    const fields = ['clientName', 'client_name', 'customer', 'customerName', 'soldTo', 'bill_to'];
     for (const field of fields) {
       if (data?.[field]) {
         if (typeof data[field] === 'object') {
-          return data[field].name || data[field].companyName || '';
+          return data[field].name || data[field].companyName || data[field].company || '';
         }
         return String(data[field]).trim();
       }
@@ -471,7 +634,7 @@ Return JSON format.`;
     const address = this.extractField(data, ['clientAddress', 'client_address', 'address']);
     if (address) return address;
     
-    const addressObj = data?.soldTo || data?.sold_to || data?.client || {};
+    const addressObj = data?.soldTo || data?.sold_to || data?.client || data?.bill_to || {};
     if (typeof addressObj === 'object' && addressObj.address) {
       return String(addressObj.address).trim();
     }
@@ -512,7 +675,7 @@ Return JSON format.`;
       return processed;
     });
   }
-  
+
   /**
    * Detect job code pattern in text
    */
@@ -537,19 +700,28 @@ Return JSON format.`;
     
     return '';
   }
-  
+
   /**
-   * Detect all job codes from various locations
+   * Detect all job codes from various locations including filename
    */
-  detectAllJobCodes(data) {
+  detectAllJobCodes(data, filename) {
     const jobCodes = new Set();
+    
+    // From filename (e.g., "PTP INV 059784 PO-024080 S4659.pdf")
+    const filenameMatch = filename.match(/S(\d{4,5})/gi);
+    if (filenameMatch) {
+      filenameMatch.forEach(match => {
+        const code = `FS-${match.toUpperCase()}`;
+        jobCodes.add(code);
+      });
+    }
     
     // From line items
     (data.items || []).forEach(item => {
       if (item.jobCode) jobCodes.add(item.jobCode.toUpperCase());
     });
     
-    // From Remark field (Broadwater style)
+    // From Remark field
     const remark = data.remark || '';
     const remarkCode = this.detectJobCodeInText(remark);
     if (remarkCode) jobCodes.add(remarkCode);
@@ -559,7 +731,7 @@ Return JSON format.`;
       jobCodes.add(remark.trim().toUpperCase());
     }
     
-    // From Our Reference field (EMI style)
+    // From Our Reference field
     const ourRef = data.ourReference || '';
     const refCode = this.detectJobCodeInText(ourRef);
     if (refCode) jobCodes.add(refCode);
@@ -570,11 +742,25 @@ Return JSON format.`;
     
     return Array.from(jobCodes);
   }
-  
+
   /**
    * Get bank details based on company format
    */
   getBankDetails(companyFormat, data) {
+    // Check if bank details were extracted from the document
+    if (data?.bankDetails && typeof data.bankDetails === 'object') {
+      const extracted = data.bankDetails;
+      if (extracted.accountNumber || extracted.bankName) {
+        return {
+          beneficiary: extracted.beneficiary || '',
+          bankName: extracted.bankName || '',
+          accountNumber: extracted.accountNumber || '',
+          email: extracted.email || ''
+        };
+      }
+    }
+    
+    // Default bank configs per company
     const bankConfigs = {
       FLOW_SOLUTION: {
         beneficiary: 'FLOW SOLUTION SDN BHD',
