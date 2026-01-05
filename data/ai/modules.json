@@ -13,11 +13,18 @@
       "Table Detection",
       "Supplier-Specific"
     ],
-    "endpoints": [
-      "/api/ai/extract/document",
-      "/api/extract-po",
-      "/api/extract-pi"
+    "documentTypes": [
+      "purchase_order",
+      "proforma_invoice",
+      "bank_payment_slip",
+      "client_invoice"
     ],
+    "endpoints": {
+      "document": "/api/ai/extract/document",
+      "purchaseOrder": "/api/extract-po",
+      "proformaInvoice": "/api/extract-pi",
+      "clientInvoice": "/api/extract-invoice"
+    },
     "usage": {
       "daily": 252,
       "weekly": 1680,

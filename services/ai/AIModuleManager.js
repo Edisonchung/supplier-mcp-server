@@ -37,7 +37,13 @@ class AIModuleManager {
         version: '2.1.0',
         icon: '📄',
         features: ['PDF Processing', 'OCR', 'Table Detection', 'Supplier-Specific'],
-        endpoints: ['/api/ai/extract/document', '/api/extract-po', '/api/extract-pi'],
+        documentTypes: ['purchase_order', 'proforma_invoice', 'bank_payment_slip', 'client_invoice'],
+        endpoints: {
+          document: '/api/ai/extract/document',
+          purchaseOrder: '/api/extract-po',
+          proformaInvoice: '/api/extract-pi',
+          clientInvoice: '/api/extract-invoice'
+        },
         usage: { daily: 245, weekly: 1680, monthly: 7200 },
         accuracy: 92,
         createdAt: new Date().toISOString(),
