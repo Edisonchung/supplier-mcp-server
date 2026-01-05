@@ -460,10 +460,15 @@ router.post('/extract-po', flexibleUpload, (req, res, next) => {
 });
 
 // ✅ CLIENT INVOICE EXTRACTION ENDPOINT
-router.post('/extract-invoice', flexibleUpload, async (req, res) => {
-  console.log('🧾 Client Invoice extraction endpoint called');
-  
+// Client Invoice extraction endpoint - reuses existing extraction pipeline
+router.post('/extract-invoice', flexibleUpload, async (req, res, next) => {
   try {
+    console.log('📄 Client Invoice extraction request received');
+    console.log('File:', req.file?.originalname);
+    
+    // Extract user context (same as PO extraction)
+    const userContext = extractUserContextFromFlexible(req);
+    
     // Find the PDF file
     const file = findUploadedFile(req, ['pdf', 'application/pdf']);
     
@@ -477,35 +482,25 @@ router.post('/extract-invoice', flexibleUpload, async (req, res) => {
       });
     }
     
-    // Extract user context
-    const userContext = {
-      email: req.body.userEmail || req.body.email || req.headers['x-user-email'] || 'anonymous',
-      userId: req.body.userId || req.headers['x-user-id'] || null,
-      company: req.body.company || 'Flow Solution Engineering',
-      role: req.body.role || 'user',
-      uid: req.body.uid || null
-    };
-    
-    // Attach file and user context to req for controller
+    // Attach file to req for controller
     req.file = file;
     req.userContext = userContext;
     
     console.log('✅ Invoice file prepared for extraction:', {
       filename: file.originalname,
       size: file.size,
-      userEmail: userContext.email,
-      company: userContext.company
+      userEmail: userContext.email
     });
     
-    // Call the client invoice extraction controller
-    await clientInvoiceController.extractFromPDF(req, res);
+    // Use existing extraction controller - same as PO extraction
+    // The frontend will handle invoice-specific field mapping
+    extractionController.extractFromPDF(req, res, next);
     
   } catch (error) {
     console.error('❌ Client invoice extraction error:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Failed to process client invoice extraction request',
-      details: error.message
+      error: error.message || 'Failed to process client invoice extraction request'
     });
   }
 });
