@@ -460,13 +460,10 @@ router.post('/extract-po', flexibleUpload, (req, res, next) => {
 });
 
 // ✅ CLIENT INVOICE EXTRACTION ENDPOINT
-router.post('/extract-invoice', flexibleUpload, (req, res, next) => {
+router.post('/extract-invoice', flexibleUpload, async (req, res) => {
   console.log('🧾 Client Invoice extraction endpoint called');
   
   try {
-    // Extract user context
-    const userContext = extractUserContextFromFlexible(req);
-    
     // Find the PDF file
     const file = findUploadedFile(req, ['pdf', 'application/pdf']);
     
@@ -480,24 +477,34 @@ router.post('/extract-invoice', flexibleUpload, (req, res, next) => {
       });
     }
     
-    // Attach file to req for controller
+    // Extract user context
+    const userContext = {
+      email: req.body.userEmail || req.body.email || req.headers['x-user-email'] || 'anonymous',
+      userId: req.body.userId || req.headers['x-user-id'] || null,
+      company: req.body.company || 'Flow Solution Engineering',
+      role: req.body.role || 'user',
+      uid: req.body.uid || null
+    };
+    
+    // Attach file and user context to req for controller
     req.file = file;
     req.userContext = userContext;
     
     console.log('✅ Invoice file prepared for extraction:', {
       filename: file.originalname,
       size: file.size,
-      userEmail: userContext.email
+      userEmail: userContext.email,
+      company: userContext.company
     });
     
     // Call the client invoice extraction controller
-    clientInvoiceController.extractFromPDF(req, res, next);
+    await clientInvoiceController.extractFromPDF(req, res);
     
   } catch (error) {
-    console.error('❌ Client invoice extraction preprocessing error:', error);
+    console.error('❌ Client invoice extraction error:', error);
     return res.status(500).json({
       success: false,
-      error: 'Failed to preprocess client invoice extraction request',
+      error: error.message || 'Failed to process client invoice extraction request',
       details: error.message
     });
   }
