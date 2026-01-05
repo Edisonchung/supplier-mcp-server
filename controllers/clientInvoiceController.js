@@ -2,7 +2,7 @@
 // Client Invoice Extraction Controller - Following existing patterns
 // Supports: Flow Solution, Broadwater, EMI Technology, EMI Automation
 
-const MCPPromptService = require('../services/mcp/MCPPromptService');
+const MCPPromptService = require('../services/MCPPromptService');
 
 class ClientInvoiceController {
   
