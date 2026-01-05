@@ -88,20 +88,48 @@ class ClientInvoiceController {
       console.log('Job codes:', detectedJobCodes);
       console.log('Time:', processingTime, 'ms');
       
+      // Create authoritative classification
+      const classificationMethod = isScannedPDF ? 'vision_api_gpt4o' : 'text_extraction';
+      const classification = {
+        documentType: 'client_invoice',
+        documentTypeConfidence: isScannedPDF ? 0.95 : 0.85,
+        classificationMethod: classificationMethod,
+        classificationSource: 'backend_authoritative',
+        classificationTimestamp: new Date().toISOString(),
+        isAuthoritative: true,
+        skipFrontendDetection: true,
+        visionApiUsed: isScannedPDF
+      };
+      
+      console.log('✅ Backend authoritative classification:', classification.documentType);
+      console.log('   Confidence:', classification.documentTypeConfidence);
+      console.log('   Method:', classification.classificationMethod);
+      
       return res.json({
         success: true,
-        data: processedData,
+        data: {
+          ...processedData,
+          documentType: 'client_invoice'
+        },
+        classification: classification,
+        documentType: 'client_invoice',
+        documentTypeConfidence: classification.documentTypeConfidence,
         extraction_metadata: {
           documentType: 'client_invoice',
+          document_type: 'client_invoice',
           companyFormat,
           extractionMethod,
+          classification_method: classificationMethod,
+          classification_source: 'backend_authoritative',
+          is_authoritative: true,
           isScannedPDF,
           processingTime,
           confidence: extractionResult.confidence || 0.85,
           jobCodesDetected: detectedJobCodes.length,
           itemsExtracted: processedData.items?.length || 0,
           userEmail: userContext.email,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          classification: classification
         }
       });
       
