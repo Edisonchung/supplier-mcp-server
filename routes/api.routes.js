@@ -8,6 +8,7 @@ const multer = require('multer');
 const extractionController = require('../controllers/extraction.controller');
 const duplicateController = require('../controllers/duplicate.controller');
 const recommendationController = require('../controllers/recommendation.controller');
+const clientInvoiceController = require('../controllers/clientInvoiceController');
 const WebSearchService = require('../services/webSearchService');
 
 // ✅ CRITICAL FIX: Configure flexible upload to handle user context fields
@@ -453,6 +454,50 @@ router.post('/extract-po', flexibleUpload, (req, res, next) => {
     return res.status(500).json({
       success: false,
       error: 'Failed to preprocess PDF extraction request',
+      details: error.message
+    });
+  }
+});
+
+// ✅ CLIENT INVOICE EXTRACTION ENDPOINT
+router.post('/extract-invoice', flexibleUpload, (req, res, next) => {
+  console.log('🧾 Client Invoice extraction endpoint called');
+  
+  try {
+    // Extract user context
+    const userContext = extractUserContextFromFlexible(req);
+    
+    // Find the PDF file
+    const file = findUploadedFile(req, ['pdf', 'application/pdf']);
+    
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No PDF file found in request',
+        code: 'NO_FILE_FOUND',
+        received_files: req.files ? req.files.length : 0,
+        received_fields: Object.keys(req.body || {})
+      });
+    }
+    
+    // Attach file to req for controller
+    req.file = file;
+    req.userContext = userContext;
+    
+    console.log('✅ Invoice file prepared for extraction:', {
+      filename: file.originalname,
+      size: file.size,
+      userEmail: userContext.email
+    });
+    
+    // Call the client invoice extraction controller
+    clientInvoiceController.extractFromPDF(req, res, next);
+    
+  } catch (error) {
+    console.error('❌ Client invoice extraction preprocessing error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to preprocess client invoice extraction request',
       details: error.message
     });
   }
