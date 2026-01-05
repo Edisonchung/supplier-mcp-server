@@ -1945,5 +1945,23 @@ router.use((error, req, res, next) => {
   });
 });
 
+// === API Documentation ===
+router.get('/docs', (req, res) => {
+  res.json({
+    service: 'HiggsFlow Extraction API',
+    version: '2.0.0',
+    description: 'Document extraction endpoints for various document types',
+    endpoints: {
+      extraction: [
+        'POST /api/extract-po - Purchase Order extraction',
+        'POST /api/extract-image - Image extraction',
+        'POST /api/extract-excel - Excel extraction',
+        'POST /api/extract-invoice - Client Invoice extraction',
+        'POST /api/bank-payments/extract - Bank Payment Slip extraction'
+      ]
+    }
+  });
+});
+
 // ✅ PRESERVED: Export just the router since category initialization is handled in server.js
 module.exports = router;
