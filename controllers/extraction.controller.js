@@ -311,6 +311,48 @@ function detectDocumentType(text) {
 }
 
 // ================================
+// AUTHORITATIVE CLASSIFICATION
+// ================================
+
+/**
+ * Create authoritative classification metadata
+ * This is the SINGLE SOURCE OF TRUTH for document type classification
+ * Frontend MUST respect this classification
+ * 
+ * @param {Object} extractedData - The AI-extracted data
+ * @param {string} pdfText - Original PDF text content  
+ * @param {Object} options - Additional classification options
+ * @returns {Object} Classification metadata
+ */
+function createAuthoritativeClassification(extractedData, pdfText = '', options = {}) {
+  const { method = 'text_extraction', forceType = null } = options;
+  
+  if (forceType) {
+    return {
+      documentType: forceType,
+      documentTypeConfidence: 0.95,
+      classificationMethod: method,
+      classificationSource: 'backend_authoritative',
+      classificationTimestamp: new Date().toISOString(),
+      isAuthoritative: true,
+      skipFrontendDetection: true
+    };
+  }
+  
+  const detectedType = detectDocumentType(pdfText || JSON.stringify(extractedData));
+  
+  return {
+    documentType: detectedType,
+    documentTypeConfidence: 0.85,
+    classificationMethod: method,
+    classificationSource: 'backend_authoritative',
+    classificationTimestamp: new Date().toISOString(),
+    isAuthoritative: true,
+    skipFrontendDetection: true
+  };
+}
+
+// ================================
 // AI EXTRACTION WITH DUAL SYSTEM
 // ================================
 
@@ -806,10 +848,22 @@ exports.extractFromPDF = async (req, res) => {
     const totalTime = Date.now() - startTime;
     console.log(`⏱️ Total extraction time: ${totalTime}ms`);
 
+    // Create authoritative classification
+    const isScannedPDF = !extractedText || extractedText.trim().length < 100;
+    const classification = createAuthoritativeClassification(enhancedData, extractedText, { 
+      method: isScannedPDF ? 'vision_api' : 'text_extraction' 
+    });
+
+    console.log('✅ Backend authoritative classification:', classification.documentType);
+    console.log('   Confidence:', classification.documentTypeConfidence);
+    console.log('   Method:', classification.classificationMethod);
+
     // NEW: Enhanced response with dual system metadata
     res.json({
       success: true,
       data: enhancedData,
+      classification: classification,
+      documentType: classification.documentType,
       extraction_metadata: {
         system_used: selectedPrompt.system,
         prompt_id: selectedPrompt.metadata.promptId,
@@ -823,9 +877,10 @@ exports.extractFromPDF = async (req, res) => {
         ai_provider_requested: selectedPrompt.metadata?.aiProvider,
         confidence_score: 0.85,
         timestamp: new Date().toISOString(),
-        document_type: documentType,
+        document_type: classification.documentType,
         extraction_method: documentType === 'proforma_invoice' ? 'PI_ENHANCED' : 
                           supplierInfo.supplier === 'PTP' ? 'PTP_TEMPLATE' : 'GENERIC',
+        classification: classification,
         prompt_system_config: {
           default_mode: PROMPT_SYSTEM_CONFIG.defaultMode,
           ab_testing_enabled: PROMPT_SYSTEM_CONFIG.enableABTesting,
