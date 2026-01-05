@@ -460,47 +460,44 @@ router.post('/extract-po', flexibleUpload, (req, res, next) => {
 });
 
 // ✅ CLIENT INVOICE EXTRACTION ENDPOINT
-// Client Invoice extraction endpoint - reuses existing extraction pipeline
-router.post('/extract-invoice', flexibleUpload, async (req, res, next) => {
+router.post('/extract-invoice', flexibleUpload, (req, res, next) => {
+  console.log('🧾 Extract-invoice endpoint called');
+  
   try {
-    console.log('📄 Client Invoice extraction request received');
-    console.log('File:', req.file?.originalname);
+    // Get user context
+    const userContext = typeof extractUserContextFromFlexible === 'function'
+      ? extractUserContextFromFlexible(req)
+      : { email: req.body?.userEmail || req.headers['x-user-email'] || 'anonymous' };
     
-    // Extract user context (same as PO extraction)
-    const userContext = extractUserContextFromFlexible(req);
+    // Find file
+    let file = req.file;
+    if (!file && req.files?.length > 0) {
+      file = req.files.find(f => f.mimetype === 'application/pdf' || f.originalname?.endsWith('.pdf')) || req.files[0];
+    }
+    if (!file && typeof findUploadedFile === 'function') {
+      file = findUploadedFile(req, ['pdf', 'application/pdf']);
+    }
     
-    // Find the PDF file
-    const file = findUploadedFile(req, ['pdf', 'application/pdf']);
+    console.log('🧾 File found:', file ? file.originalname : 'NO FILE');
     
     if (!file) {
       return res.status(400).json({
         success: false,
-        error: 'No PDF file found in request',
-        code: 'NO_FILE_FOUND',
-        received_files: req.files ? req.files.length : 0,
-        received_fields: Object.keys(req.body || {})
+        error: 'No PDF file found',
+        code: 'NO_FILE_FOUND'
       });
     }
     
-    // Attach file to req for controller
     req.file = file;
     req.userContext = userContext;
     
-    console.log('✅ Invoice file prepared for extraction:', {
-      filename: file.originalname,
-      size: file.size,
-      userEmail: userContext.email
-    });
-    
-    // Use existing extraction controller - same as PO extraction
-    // The frontend will handle invoice-specific field mapping
-    extractionController.extractFromPDF(req, res, next);
+    clientInvoiceController.extractFromPDF(req, res);
     
   } catch (error) {
-    console.error('❌ Client invoice extraction error:', error);
+    console.error('❌ Extract-invoice error:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Failed to process client invoice extraction request'
+      error: error.message
     });
   }
 });
