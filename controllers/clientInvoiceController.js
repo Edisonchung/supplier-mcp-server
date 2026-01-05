@@ -2,6 +2,7 @@
 // Client Invoice Extraction Controller - Following existing patterns
 // Supports: Flow Solution, Broadwater, EMI Technology, EMI Automation
 
+const fs = require('fs');
 const MCPPromptService = require('../services/MCPPromptService');
 
 class ClientInvoiceController {
@@ -256,10 +257,23 @@ Return JSON format.`;
       throw new Error('DEEPSEEK_API_KEY not configured');
     }
     
-    // Convert PDF to base64 or extract text
+    // FIX: Read from file.path (disk) OR file.buffer (memory)
     const pdfParse = require('pdf-parse');
-    const pdfData = await pdfParse(file.buffer);
+    
+    let pdfBuffer;
+    if (file.buffer) {
+      pdfBuffer = file.buffer;
+    } else if (file.path) {
+      pdfBuffer = fs.readFileSync(file.path);
+    } else {
+      throw new Error('No file buffer or path available');
+    }
+    
+    const pdfData = await pdfParse(pdfBuffer);
     const textContent = pdfData.text;
+    
+    console.log('📄 Extracted PDF text length:', textContent.length);
+    console.log('📄 PDF text preview:', textContent.substring(0, 500));
     
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
